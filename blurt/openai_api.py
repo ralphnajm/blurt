@@ -9,11 +9,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 import httpx
-import numpy as np
 from websockets.sync.client import ClientConnection, connect
 
 from blurt.config import Config
-from blurt.recorder import STREAM_RATE, to_pcm16
+from blurt.recorder import RATE, SAMPLE_BYTES
 
 API_BASE = "https://api.openai.com/v1"
 REALTIME_URL = "wss://api.openai.com/v1/realtime?intent=transcription"
@@ -51,17 +50,17 @@ def check_key(key: str) -> None:
     raise_for_status(response)
 
 
-def wav_bytes(audio: np.ndarray, rate: int) -> bytes:
+def wav_bytes(pcm: bytes) -> bytes:
     buffer = io.BytesIO()
     with wave.open(buffer, "wb") as out:
         out.setnchannels(1)
-        out.setsampwidth(2)
-        out.setframerate(rate)
-        out.writeframes(to_pcm16(audio))
+        out.setsampwidth(SAMPLE_BYTES)
+        out.setframerate(RATE)
+        out.writeframes(pcm)
     return buffer.getvalue()
 
 
-def transcribe(key: str, config: Config, audio: np.ndarray, rate: int) -> str:
+def transcribe(key: str, config: Config, audio: bytes, filename: str = "dictation.wav") -> str:
     data = {"model": config.transcribe_model, "response_format": "json"}
     if config.language != "auto":
         data["language"] = config.language
@@ -71,7 +70,7 @@ def transcribe(key: str, config: Config, audio: np.ndarray, rate: int) -> str:
         f"{API_BASE}/audio/transcriptions",
         headers=headers(key),
         data=data,
-        files={"file": ("dictation.wav", wav_bytes(audio, rate), "audio/wav")},
+        files={"file": (filename, audio)},
         timeout=60,
     )
     raise_for_status(response)
@@ -118,8 +117,8 @@ class StreamSession:
     def start(self) -> None:
         self._thread.start()
 
-    def feed(self, chunk: np.ndarray) -> None:
-        self._outbox.put(to_pcm16(chunk))
+    def feed(self, chunk: bytes) -> None:
+        self._outbox.put(chunk)
 
     def finish(self, timeout: float = 15) -> str:
         self._outbox.put(COMMIT)
@@ -149,7 +148,7 @@ class StreamSession:
                     "type": "transcription",
                     "audio": {
                         "input": {
-                            "format": {"type": "audio/pcm", "rate": STREAM_RATE},
+                            "format": {"type": "audio/pcm", "rate": RATE},
                             "transcription": transcription,
                             "turn_detection": None,
                         }

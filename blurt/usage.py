@@ -90,7 +90,7 @@ def audio_seconds_since(since: datetime) -> float:
     with connect() as conn:
         row = conn.execute(
             "SELECT COALESCE(SUM(audio_seconds), 0) FROM usage"
-            " WHERE at >= ? AND kind IN ('transcribe', 'stream', 'local')",
+            " WHERE at >= ? AND kind IN ('transcribe', 'stream')",
             (since.isoformat(),),
         ).fetchone()
     return float(row[0])

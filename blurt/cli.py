@@ -1,9 +1,10 @@
 import argparse
 import json
+import subprocess
 import sys
 import time
+from pathlib import Path
 
-from faster_whisper import decode_audio
 from gi.repository import Gio, GLib
 
 from blurt import __version__, account, gui, openai_api
@@ -11,8 +12,7 @@ from blurt.cleanup import clean
 from blurt.config import CONFIG_PATH, load_config
 from blurt.credentials import get_api_key
 from blurt.daemon import BUS_NAME, HISTORY_PATH, INTERFACE, OBJECT_PATH, Daemon
-from blurt.recorder import STREAM_RATE, WHISPER_RATE
-from blurt.transcriber import LocalTranscriber
+from blurt.recorder import RATE, SAMPLE_BYTES
 
 
 def call(method: str, timeout_ms: int = 5000) -> GLib.Variant | None:
@@ -59,35 +59,39 @@ def cmd_teardown(_args: argparse.Namespace) -> None:
     print("Blurt is switched off for this account. Config, API key and usage history were kept.")
 
 
+def decode_pcm(path: str) -> bytes:
+    result = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", path, "-f", "s16le", "-ac", "1", "-ar", str(RATE), "-"],
+        capture_output=True,
+        check=True,
+    )
+    return result.stdout
+
+
 def cmd_transcribe(args: argparse.Namespace) -> None:
     config = load_config()
     if args.cleanup:
         config.cleanup = args.cleanup
     key = get_api_key()
-    if args.engine != "local" and not key:
+    if not key:
         sys.exit("No OpenAI API key saved. Add one with `blurt settings`.")
-    rate = STREAM_RATE if args.engine == "stream" else WHISPER_RATE
-    audio = decode_audio(args.file, sampling_rate=rate)
-    seconds = audio.size / rate
     started = time.monotonic()
-    if args.engine == "local":
-        raw = LocalTranscriber(config).transcribe(audio, rate)
-    elif args.engine == "openai":
-        raw = openai_api.transcribe(key or "", config, audio, rate)
-    else:
+    if args.stream:
+        pcm = decode_pcm(args.file)
         session = openai_api.StreamSession(
-            key or "", config, lambda text: print(f"  … {text}", file=sys.stderr)
+            key, config, lambda text: print(f"  … {text}", file=sys.stderr)
         )
         session.start()
-        step = rate // 10
-        for i in range(0, audio.size, step):
-            session.feed(audio[i : i + step])
+        step = RATE // 10 * SAMPLE_BYTES
+        for i in range(0, len(pcm), step):
+            session.feed(pcm[i : i + step])
             time.sleep(0.1 / args.speed)
         raw = session.finish()
-    print(
-        f"transcribe {time.monotonic() - started:.2f}s ({seconds:.1f}s audio, {args.engine})",
-        file=sys.stderr,
-    )
+    else:
+        file = Path(args.file)
+        raw = openai_api.transcribe(key, config, file.read_bytes(), file.name)
+    mode = "stream" if args.stream else config.transcribe_model
+    print(f"transcribe {time.monotonic() - started:.2f}s ({mode})", file=sys.stderr)
     started = time.monotonic()
     cleaned = clean(raw, config, key)
     print(f"cleanup    {time.monotonic() - started:.2f}s ({config.cleanup})", file=sys.stderr)
@@ -117,9 +121,9 @@ def main() -> None:
         sub.add_parser(name, help=f"{name} dictation" if name != "status" else "show daemon state")
     sub.add_parser("authorize", help="grant keyboard access through the portal dialog")
     sub.add_parser("daemon", help="run the background service")
-    transcribe = sub.add_parser("transcribe", help="transcribe and clean an audio file")
+    transcribe = sub.add_parser("transcribe", help="transcribe and clean an audio file with OpenAI")
     transcribe.add_argument("file")
-    transcribe.add_argument("--engine", choices=["local", "openai", "stream"], default="local")
+    transcribe.add_argument("--stream", action="store_true", help="use streaming (needs ffmpeg)")
     transcribe.add_argument("--cleanup", choices=["openai", "codex", "basic", "off"])
     transcribe.add_argument("--speed", type=float, default=1.0, help="stream faster than real time")
     history = sub.add_parser("history", help="show recent dictations")

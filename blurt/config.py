@@ -5,10 +5,9 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any, Literal
 
-type Engine = Literal["openai", "local"]
 type CleanupMode = Literal["openai", "codex", "basic", "off"]
 type InjectMode = Literal["auto", "type", "paste"]
-type BudgetAction = Literal["warn", "local"]
+type BudgetAction = Literal["warn", "block"]
 
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "blurt"
 STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "blurt"
@@ -17,16 +16,12 @@ CONFIG_PATH = CONFIG_DIR / "config.toml"
 
 @dataclass
 class Config:
-    engine: Engine = "openai"
     streaming: bool = False
     transcribe_model: str = "gpt-transcribe"
     stream_model: str = "gpt-live-transcribe"
     stream_delay: str = "low"
     language: str = "en"
     vocabulary: list[str] = field(default_factory=list)
-    fallback_local: bool = True
-    local_model: str = "large-v3-turbo"
-    threads: int = 0
     cleanup: CleanupMode = "openai"
     cleanup_model: str = "gpt-5-mini"
     codex_model: str = "gpt-5.6-luna"
@@ -53,6 +48,8 @@ def load_config() -> Config:
         value = raw.get(f.name, getattr(defaults, f.name))
         default = getattr(defaults, f.name)
         values[f.name] = float(value) if isinstance(default, float) else value
+    if values["budget_action"] not in ("warn", "block"):
+        values["budget_action"] = defaults.budget_action
     return Config(**values)
 
 

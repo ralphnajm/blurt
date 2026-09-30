@@ -15,7 +15,7 @@ version="${tag#v}"
 tagged="$(git show "$tag:pyproject.toml" | sed -n 's/^version = "\(.*\)"$/\1/p')"
 [[ "$tagged" == "$version" ]] || die "pyproject.toml at $tag says $tagged, not $version"
 command -v rpmbuild >/dev/null ||
-    die "rpmbuild missing: sudo dnf install rpm-build systemd-rpm-macros python3-devel desktop-file-utils"
+    die "rpmbuild missing: sudo dnf install rpm-build systemd-rpm-macros python3-devel pyproject-rpm-macros python3-poetry-core desktop-file-utils"
 
 top="$(mktemp -d)"
 trap 'rm -rf "$top"' EXIT
@@ -34,6 +34,7 @@ done < <(git tag --list 'v[0-9]*' --sort=-v:refname) > "$top/SPECS/changelog"
 
 rpmbuild -bb \
     --define "_topdir $top" \
+    --define "_binary_payload w3T0.zstdio" \
     --define "blurt_version $version" \
     --define "blurt_changelog $top/SPECS/changelog" \
     "$top/SPECS/blurt.spec"

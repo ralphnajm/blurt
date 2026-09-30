@@ -14,7 +14,6 @@ from blurt.daemon import APP_ID, BUS_NAME, INTERFACE, OBJECT_PATH
 from blurt.openai_api import check_key
 from blurt.portal import TOKEN_PATH
 from blurt.pricing import (
-    LOCAL_MODELS,
     PRICES_AS_OF,
     STREAM_DELAYS,
     STREAM_PER_MINUTE,
@@ -299,11 +298,6 @@ class Window(Adw.ApplicationWindow):
     def _speech_group(self) -> Adw.PreferencesGroup:
         c = self.config
         group = Adw.PreferencesGroup(title="Speech recognition")
-        group.add(
-            self._combo(
-                "Engine", None, [("openai", "OpenAI"), ("local", "Local Whisper")], "engine"
-            )
-        )
         stream_rate = (
             STREAM_PER_MINUTE[c.stream_model] if c.stream_model in STREAM_PER_MINUTE else 0
         )
@@ -342,14 +336,6 @@ class Window(Adw.ApplicationWindow):
             ),
         )
         group.add(vocabulary)
-        self._fallback_row = self._switch(
-            "Local fallback", "Use local Whisper when offline or the API fails", "fallback_local"
-        )
-        group.add(self._fallback_row)
-        self._local_row = self._combo(
-            "Local model", None, [(m, m) for m in LOCAL_MODELS], "local_model"
-        )
-        group.add(self._local_row)
         return group
 
     def _cleanup_group(self) -> Adw.PreferencesGroup:
@@ -399,7 +385,7 @@ class Window(Adw.ApplicationWindow):
             self._combo(
                 "When the budget is reached",
                 None,
-                [("warn", "Warn me"), ("local", "Switch to local Whisper")],
+                [("warn", "Warn me"), ("block", "Stop dictating")],
                 "budget_action",
             )
         )
@@ -481,12 +467,8 @@ class Window(Adw.ApplicationWindow):
 
     def _sync_sensitivity(self) -> None:
         c: Config = self.config
-        openai = c.engine == "openai"
-        self._stream_row.set_sensitive(openai)
-        self._model_row.set_sensitive(openai and not c.streaming)
-        self._delay_row.set_sensitive(openai and c.streaming)
-        self._fallback_row.set_sensitive(openai)
-        self._local_row.set_sensitive(not openai or c.fallback_local)
+        self._model_row.set_sensitive(not c.streaming)
+        self._delay_row.set_sensitive(c.streaming)
         self._cleanup_model_row.set_sensitive(c.cleanup == "openai")
 
     def _call_daemon(

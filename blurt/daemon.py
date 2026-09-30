@@ -3,9 +3,9 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Literal
 
-import numpy as np
 from gi.repository import Gio, GLib
 
 from blurt import openai_api, usage
@@ -16,14 +16,15 @@ from blurt.feedback import Feedback
 from blurt.injector import Injector
 from blurt.openai_api import StreamSession
 from blurt.pricing import audio_cost
-from blurt.recorder import STREAM_RATE, WHISPER_RATE, Recorder
-from blurt.transcriber import LocalTranscriber
+from blurt.recorder import Recorder, seconds
 
 APP_ID = "dev.blurt.Blurt"
 BUS_NAME = "dev.blurt.Daemon"
 OBJECT_PATH = "/dev/blurt/Daemon"
 INTERFACE = "dev.blurt.Daemon"
 HISTORY_PATH = STATE_DIR / "history.jsonl"
+FAILED_DIR = STATE_DIR / "failed"
+KEEP_FAILED = 20
 INTROSPECTION = f"""
 <node>
   <interface name="{INTERFACE}">
@@ -43,13 +44,13 @@ MIN_SECONDS = 0.3
 PREVIEW_INTERVAL = 1.0
 
 type State = Literal["idle", "recording", "processing"]
-type Route = Literal["stream", "transcribe", "local"]
+type Route = Literal["stream", "transcribe"]
 
 
 @dataclass
 class Plan:
     route: Route
-    key: str | None
+    key: str
     notes: list[str] = field(default_factory=list)
     session: StreamSession | None = None
 
@@ -59,7 +60,6 @@ class Daemon:
         self._config = config
         self._state: State = "idle"
         self._recorder = Recorder()
-        self._local = LocalTranscriber(config)
         self._feedback = Feedback(config)
         self._loop = GLib.MainLoop()
         self._bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
@@ -76,8 +76,6 @@ class Daemon:
         Gio.bus_own_name_on_connection(
             self._bus, BUS_NAME, Gio.BusNameOwnerFlags.NONE, None, self._on_name_lost
         )
-        if self._config.engine == "local":
-            self._preload_local()
         self._loop.run()
 
     def _register_app(self) -> None:
@@ -95,20 +93,6 @@ class Daemon:
             )
         except GLib.Error as exc:
             print(f"Portal app registration failed: {exc.message}", flush=True)
-
-    def _preload_local(self) -> None:
-        def load() -> None:
-            started = time.monotonic()
-            try:
-                self._local.ensure_loaded()
-                print(
-                    f"Whisper {self._config.local_model} ready in {time.monotonic() - started:.1f}s",
-                    flush=True,
-                )
-            except Exception as exc:
-                print(f"Whisper failed to load: {exc}", flush=True)
-
-        threading.Thread(target=load, daemon=True).start()
 
     def _on_name_lost(self, *_args: object) -> None:
         print(f"Could not own {BUS_NAME}; is another daemon running?", flush=True)
@@ -157,10 +141,6 @@ class Daemon:
 
     def reload(self) -> None:
         update_in_place(self._config, load_config())
-        if self._config.engine == "local":
-            self._preload_local()
-        elif not self._config.fallback_local:
-            self._local.unload()
 
     def start(self) -> None:
         if self._state != "idle":
@@ -170,15 +150,12 @@ class Daemon:
         except RuntimeError as exc:
             self._fail("Can't start dictation", str(exc))
             return
-        rate = STREAM_RATE if plan.route == "stream" else WHISPER_RATE
-        if plan.route == "stream" and plan.key:
+        if plan.route == "stream":
             plan.session = StreamSession(plan.key, self._config, self._on_partial)
             plan.session.start()
-        elif plan.route == "local":
-            self._preload_local()
         try:
             self._recorder.start(
-                rate, self._config.max_seconds, plan.session.feed if plan.session else None
+                self._config.max_seconds, plan.session.feed if plan.session else None
             )
         except Exception as exc:
             if plan.session:
@@ -190,27 +167,20 @@ class Daemon:
         self._last_preview = 0.0
         self._change_state("recording")
         self._feedback.sound("start")
-        route = {"stream": "streaming", "transcribe": "OpenAI", "local": "local Whisper"}[
-            plan.route
-        ]
-        body = " · ".join([f"Press the shortcut again to finish ({route})", *plan.notes])
+        body = " · ".join(["Press the shortcut again to finish", *plan.notes])
         self._feedback.notify("Listening…", body)
         self._timeout_id = GLib.timeout_add_seconds(self._config.max_seconds, self._on_max_duration)
 
     def _make_plan(self) -> Plan:
-        if self._config.engine == "local":
-            return Plan("local", None)
         key = get_api_key()
         if not key:
-            if self._config.fallback_local:
-                return Plan("local", None, ["No OpenAI API key, using local Whisper"])
             raise RuntimeError("No OpenAI API key. Add one in Blurt settings.")
         notes = []
         budget = self._config.monthly_budget
         if budget > 0 and usage.cost_since(usage.month_start()) >= budget:
-            if self._config.budget_action == "local":
-                return Plan(
-                    "local", key, [f"${budget:.2f} monthly budget reached, using local Whisper"]
+            if self._config.budget_action == "block":
+                raise RuntimeError(
+                    f"The ${budget:.2f} monthly budget is used up. Raise it in Blurt settings."
                 )
             notes.append(f"${budget:.2f} monthly budget reached")
         return Plan("stream" if self._config.streaming else "transcribe", key, notes)
@@ -227,22 +197,20 @@ class Daemon:
         if self._state != "recording" or self._plan is None:
             return
         self._clear_timeout()
-        rate = self._recorder.rate
         audio = self._recorder.stop()
         self._feedback.sound("stop")
         self._change_state("processing")
-        self._feedback.notify("Transcribing…", f"{audio.size / rate:.1f}s of audio")
+        self._feedback.notify("Transcribing…", f"{seconds(audio):.1f}s of audio")
         plan, self._plan = self._plan, None
-        threading.Thread(target=self._process, args=(audio, rate, plan), daemon=True).start()
+        threading.Thread(target=self._process, args=(audio, plan), daemon=True).start()
 
     def cancel(self) -> None:
         if self._state == "recording":
             self._clear_timeout()
-            rate = self._recorder.rate
             audio = self._recorder.stop()
             if self._plan and self._plan.session:
                 self._plan.session.abort()
-                self._record_stream(self._plan, rate, audio.size / rate)
+                self._record_stream(self._plan, seconds(audio))
             self._plan = None
             self._change_state("idle")
             self._feedback.notify("Dictation cancelled", "", 1500)
@@ -250,17 +218,23 @@ class Daemon:
             self._cancelled.set()
             self._feedback.notify("Dictation cancelled", "", 1500)
 
-    def _process(self, audio: np.ndarray, rate: int, plan: Plan) -> None:
+    def _process(self, audio: bytes, plan: Plan) -> None:
         timings: dict[str, float] = {}
         try:
-            seconds = audio.size / rate
-            if seconds < MIN_SECONDS:
+            if seconds(audio) < MIN_SECONDS:
                 if plan.session:
                     plan.session.abort()
                 GLib.idle_add(self._finish_empty)
                 return
             started = time.monotonic()
-            raw = self._transcribe(audio, rate, plan)
+            try:
+                raw = self._transcribe(audio, plan)
+            except Exception as exc:
+                saved = self._save_failed(audio)
+                GLib.idle_add(
+                    self._fail, "Transcription failed", f"{exc}\nRecording saved to {saved}"
+                )
+                return
             timings["transcribe"] = time.monotonic() - started
             if not raw:
                 GLib.idle_add(self._finish_empty)
@@ -294,34 +268,33 @@ class Daemon:
         finally:
             GLib.idle_add(self._set_idle)
 
-    def _transcribe(self, audio: np.ndarray, rate: int, plan: Plan) -> str:
-        seconds = audio.size / rate
-        if plan.route == "stream" and plan.session:
+    def _transcribe(self, audio: bytes, plan: Plan) -> str:
+        duration = seconds(audio)
+        if plan.session:
             try:
                 return plan.session.finish()
             except Exception as exc:
-                plan.notes.append(f"Streaming failed ({exc})")
+                plan.notes.append(f"Streaming failed ({exc}), uploaded instead")
             finally:
-                self._record_stream(plan, rate, seconds)
-        if plan.route in ("stream", "transcribe") and plan.key:
-            try:
-                text = openai_api.transcribe(plan.key, self._config, audio, rate)
-                model = self._config.transcribe_model
-                usage.record("transcribe", model, seconds, cost=audio_cost(model, seconds))
-                return text
-            except Exception as exc:
-                if not self._config.fallback_local:
-                    raise
-                plan.notes.append(f"OpenAI failed ({exc}), used local Whisper")
-        text = self._local.transcribe(audio, rate)
-        usage.record("local", self._config.local_model, seconds)
+                self._record_stream(plan, duration)
+        text = openai_api.transcribe(plan.key, self._config, openai_api.wav_bytes(audio))
+        model = self._config.transcribe_model
+        usage.record("transcribe", model, duration, cost=audio_cost(model, duration))
         return text
 
-    def _record_stream(self, plan: Plan, rate: int, seconds: float) -> None:
+    def _record_stream(self, plan: Plan, duration: float) -> None:
         if plan.session is None or not plan.session.connected:
             return
         model = self._config.stream_model
-        usage.record("stream", model, seconds, cost=audio_cost(model, seconds))
+        usage.record("stream", model, duration, cost=audio_cost(model, duration))
+
+    def _save_failed(self, audio: bytes) -> Path:
+        FAILED_DIR.mkdir(parents=True, exist_ok=True)
+        target = FAILED_DIR / f"{datetime.now().strftime('%Y%m%d-%H%M%S')}.wav"
+        target.write_bytes(openai_api.wav_bytes(audio))
+        for old in sorted(FAILED_DIR.glob("*.wav"))[:-KEEP_FAILED]:
+            old.unlink()
+        return target
 
     def _finish_ok(self, text: str, warning: str | None) -> bool:
         self._feedback.notify(warning or "Dictated", text.strip(), 3000)

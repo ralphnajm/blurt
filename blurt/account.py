@@ -6,6 +6,7 @@ from blurt.daemon import BUS_NAME, INTERFACE, OBJECT_PATH
 
 SERVICE = "blurt.service"
 EXTENSION_UUID = "blurt@dev.blurt"
+SHELL_SCHEMA = "org.gnome.shell"
 KEYBINDINGS_SCHEMA = "org.gnome.settings-daemon.plugins.media-keys"
 KEYBINDING_SCHEMA = f"{KEYBINDINGS_SCHEMA}.custom-keybinding"
 KEYBINDING_ROOT = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings"
@@ -81,11 +82,41 @@ def remove_shortcuts() -> None:
     )
 
 
+def shell_list(key: str) -> list[str]:
+    raw = gsettings("get", SHELL_SCHEMA, key)
+    return list(ast.literal_eval(raw.removeprefix("@as "))) if raw else []
+
+
+def set_shell_list(key: str, values: list[str]) -> None:
+    gsettings("set", SHELL_SCHEMA, key, str(values))
+
+
 def extension_state() -> tuple[bool, bool]:
+    enabled = EXTENSION_UUID in shell_list("enabled-extensions")
+    enabled = enabled and EXTENSION_UUID not in shell_list("disabled-extensions")
+    enabled = enabled and gsettings("get", SHELL_SCHEMA, "disable-user-extensions") == "false"
     info = run("gnome-extensions", "info", EXTENSION_UUID).stdout
-    enabled = "Enabled: Yes" in info
     loaded = "State: ACTIVE" in info or "State: ENABLED" in info
     return enabled, loaded
+
+
+def enable_extension() -> None:
+    gsettings("set", SHELL_SCHEMA, "disable-user-extensions", "false")
+    if run("gnome-extensions", "enable", EXTENSION_UUID).returncode == 0:
+        return
+    enabled = shell_list("enabled-extensions")
+    if EXTENSION_UUID not in enabled:
+        set_shell_list("enabled-extensions", [*enabled, EXTENSION_UUID])
+    disabled = shell_list("disabled-extensions")
+    if EXTENSION_UUID in disabled:
+        set_shell_list("disabled-extensions", [u for u in disabled if u != EXTENSION_UUID])
+
+
+def disable_extension() -> None:
+    run("gnome-extensions", "disable", EXTENSION_UUID)
+    enabled = shell_list("enabled-extensions")
+    if EXTENSION_UUID in enabled:
+        set_shell_list("enabled-extensions", [u for u in enabled if u != EXTENSION_UUID])
 
 
 def status() -> Status:
@@ -106,11 +137,11 @@ def set_up(bindings: dict[str, str] | None = None) -> Status:
         set_shortcut(name, bindings.get(name) or shortcut(name) or DEFAULT_SHORTCUTS[name])
     run("systemctl", "--user", "daemon-reload")
     run("systemctl", "--user", "enable", "--now", SERVICE)
-    run("gnome-extensions", "enable", EXTENSION_UUID)
+    enable_extension()
     return status()
 
 
 def tear_down() -> None:
     run("systemctl", "--user", "disable", "--now", SERVICE)
-    run("gnome-extensions", "disable", EXTENSION_UUID)
+    disable_extension()
     remove_shortcuts()

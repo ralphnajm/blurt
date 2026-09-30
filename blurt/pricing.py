@@ -16,7 +16,6 @@ TEXT_PER_MILLION = {
     "gpt-4.1-nano": (0.10, 0.40),
     "gpt-4o-mini": (0.15, 0.60),
 }
-LOCAL_MODELS = ["tiny", "base", "small", "medium", "large-v3-turbo", "large-v3"]
 STREAM_DELAYS = ["minimal", "low", "medium", "high", "xhigh"]
 
 
