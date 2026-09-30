@@ -6,21 +6,14 @@ TRANSCRIBE_PER_MINUTE = {
     "gpt-4o-mini-transcribe": 0.003,
     "whisper-1": 0.006,
 }
-STREAM_PER_MINUTE = {
-    "gpt-live-transcribe": 0.017,
-}
+CLEANUP_MODEL = "gpt-6-luna"
 TEXT_PER_MILLION = {
-    "gpt-5-mini": (0.25, 2.00),
-    "gpt-5-nano": (0.05, 0.40),
-    "gpt-6-luna": (0.10, 0.50),
-    "gpt-4.1-nano": (0.10, 0.40),
-    "gpt-4o-mini": (0.15, 0.60),
+    CLEANUP_MODEL: (0.10, 0.50),
 }
-STREAM_DELAYS = ["minimal", "low", "medium", "high", "xhigh"]
 
 
 def audio_cost(model: str, seconds: float) -> float:
-    rate = TRANSCRIBE_PER_MINUTE.get(model) or STREAM_PER_MINUTE.get(model) or 0.0
+    rate = TRANSCRIBE_PER_MINUTE.get(model, 0.0)
     return rate * seconds / 60
 
 

@@ -15,8 +15,7 @@ from blurt.openai_api import check_key
 from blurt.portal import TOKEN_PATH
 from blurt.pricing import (
     PRICES_AS_OF,
-    STREAM_DELAYS,
-    STREAM_PER_MINUTE,
+    CLEANUP_MODEL,
     TEXT_PER_MILLION,
     TRANSCRIBE_PER_MINUTE,
 )
@@ -298,19 +297,6 @@ class Window(Adw.ApplicationWindow):
     def _speech_group(self) -> Adw.PreferencesGroup:
         c = self.config
         group = Adw.PreferencesGroup(title="Speech recognition")
-        stream_rate = (
-            STREAM_PER_MINUTE[c.stream_model] if c.stream_model in STREAM_PER_MINUTE else 0
-        )
-        self._stream_row = Adw.SwitchRow(
-            title="Streaming",
-            subtitle=f"On: text is transcribed while you speak ({rate(stream_rate)}/min). "
-            "Off: the recording is transcribed after you stop.",
-        )
-        self._stream_row.set_active(c.streaming)
-        self._stream_row.connect(
-            "notify::active", lambda row, _p: self._set("streaming", row.get_active())
-        )
-        group.add(self._stream_row)
         self._model_row = self._combo(
             "Transcription model",
             None,
@@ -319,13 +305,6 @@ class Window(Adw.ApplicationWindow):
             lambda m: f"{rate(TRANSCRIBE_PER_MINUTE[m])}/min" if m in TRANSCRIBE_PER_MINUTE else "",
         )
         group.add(self._model_row)
-        self._delay_row = self._combo(
-            "Streaming delay",
-            "Lower shows text sooner, higher is more accurate",
-            [(d, d.capitalize()) for d in STREAM_DELAYS],
-            "stream_delay",
-        )
-        group.add(self._delay_row)
         group.add(self._entry("Language", "language", "Language code such as en or de, or auto"))
         vocabulary = Adw.EntryRow(title="Vocabulary (comma-separated)")
         vocabulary.set_text(", ".join(c.vocabulary))
@@ -342,31 +321,30 @@ class Window(Adw.ApplicationWindow):
         group = Adw.PreferencesGroup(
             title="Cleanup", description="Removes fillers and false starts and fixes grammar"
         )
+        price_in, price_out = TEXT_PER_MILLION[CLEANUP_MODEL]
         group.add(
             self._combo(
                 "Cleanup",
                 None,
-                [
-                    ("openai", "OpenAI"),
-                    ("codex", "Codex CLI (slower)"),
-                    ("basic", "Filler removal only"),
-                    ("off", "Off"),
-                ],
+                [("openai", "OpenAI"), ("basic", "Filler removal only"), ("off", "Off")],
                 "cleanup",
+                lambda mode: (
+                    f"{CLEANUP_MODEL} · {rate(price_in)} in · {rate(price_out)} out per 1M tokens"
+                    if mode == "openai"
+                    else "Runs locally, free"
+                    if mode == "basic"
+                    else "Types the transcript as is"
+                ),
             )
         )
-        self._cleanup_model_row = self._combo(
-            "Cleanup model",
+        self._reasoning_row = self._combo(
+            "Reasoning",
             None,
-            [(m, m) for m in TEXT_PER_MILLION],
-            "cleanup_model",
-            lambda m: (
-                f"{rate(TEXT_PER_MILLION[m][0])} in · {rate(TEXT_PER_MILLION[m][1])} out per 1M tokens"
-                if m in TEXT_PER_MILLION
-                else ""
-            ),
+            [("none", "None"), ("low", "Low")],
+            "cleanup_reasoning",
+            lambda level: "Fastest" if level == "none" else "Slower, handles messier sentences",
         )
-        group.add(self._cleanup_model_row)
+        group.add(self._reasoning_row)
         group.add(self._entry("Extra instructions", "cleanup_instructions", None))
         return group
 
@@ -467,9 +445,7 @@ class Window(Adw.ApplicationWindow):
 
     def _sync_sensitivity(self) -> None:
         c: Config = self.config
-        self._model_row.set_sensitive(not c.streaming)
-        self._delay_row.set_sensitive(c.streaming)
-        self._cleanup_model_row.set_sensitive(c.cleanup == "openai")
+        self._reasoning_row.set_sensitive(c.cleanup == "openai")
 
     def _call_daemon(
         self, method: str, timeout_ms: int = 3000, done: Callable[[str | None], None] | None = None

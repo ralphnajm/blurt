@@ -5,26 +5,29 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any, Literal
 
-type CleanupMode = Literal["openai", "codex", "basic", "off"]
+type CleanupMode = Literal["openai", "basic", "off"]
+type Reasoning = Literal["none", "low"]
 type InjectMode = Literal["auto", "type", "paste"]
 type BudgetAction = Literal["warn", "block"]
 
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "blurt"
 STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "blurt"
 CONFIG_PATH = CONFIG_DIR / "config.toml"
+CHOICES = {
+    "cleanup": ("openai", "basic", "off"),
+    "cleanup_reasoning": ("none", "low"),
+    "inject": ("auto", "type", "paste"),
+    "budget_action": ("warn", "block"),
+}
 
 
 @dataclass
 class Config:
-    streaming: bool = False
     transcribe_model: str = "gpt-transcribe"
-    stream_model: str = "gpt-live-transcribe"
-    stream_delay: str = "low"
     language: str = "en"
     vocabulary: list[str] = field(default_factory=list)
     cleanup: CleanupMode = "openai"
-    cleanup_model: str = "gpt-5-mini"
-    codex_model: str = "gpt-5.6-luna"
+    cleanup_reasoning: Reasoning = "none"
     cleanup_instructions: str = ""
     cleanup_timeout: int = 25
     inject: InjectMode = "auto"
@@ -48,8 +51,9 @@ def load_config() -> Config:
         value = raw.get(f.name, getattr(defaults, f.name))
         default = getattr(defaults, f.name)
         values[f.name] = float(value) if isinstance(default, float) else value
-    if values["budget_action"] not in ("warn", "block"):
-        values["budget_action"] = defaults.budget_action
+    for key, allowed in CHOICES.items():
+        if values[key] not in allowed:
+            values[key] = getattr(defaults, key)
     return Config(**values)
 
 

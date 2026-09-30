@@ -14,7 +14,6 @@ from blurt.config import STATE_DIR, Config, load_config, update_in_place
 from blurt.credentials import get_api_key
 from blurt.feedback import Feedback
 from blurt.injector import Injector
-from blurt.openai_api import StreamSession
 from blurt.pricing import audio_cost
 from blurt.recorder import Recorder, seconds
 
@@ -41,18 +40,14 @@ INTROSPECTION = f"""
 </node>
 """
 MIN_SECONDS = 0.3
-PREVIEW_INTERVAL = 1.0
 
 type State = Literal["idle", "recording", "processing"]
-type Route = Literal["stream", "transcribe"]
 
 
 @dataclass
 class Plan:
-    route: Route
     key: str
     notes: list[str] = field(default_factory=list)
-    session: StreamSession | None = None
 
 
 class Daemon:
@@ -67,7 +62,6 @@ class Daemon:
         self._cancelled = threading.Event()
         self._timeout_id = 0
         self._plan: Plan | None = None
-        self._last_preview = 0.0
 
     def run(self) -> None:
         self._register_app()
@@ -150,21 +144,13 @@ class Daemon:
         except RuntimeError as exc:
             self._fail("Can't start dictation", str(exc))
             return
-        if plan.route == "stream":
-            plan.session = StreamSession(plan.key, self._config, self._on_partial)
-            plan.session.start()
         try:
-            self._recorder.start(
-                self._config.max_seconds, plan.session.feed if plan.session else None
-            )
+            self._recorder.start(self._config.max_seconds)
         except Exception as exc:
-            if plan.session:
-                plan.session.abort()
             self._fail("Microphone unavailable", str(exc))
             return
         self._plan = plan
         self._cancelled.clear()
-        self._last_preview = 0.0
         self._change_state("recording")
         self._feedback.sound("start")
         body = " · ".join(["Press the shortcut again to finish", *plan.notes])
@@ -183,15 +169,7 @@ class Daemon:
                     f"The ${budget:.2f} monthly budget is used up. Raise it in Blurt settings."
                 )
             notes.append(f"${budget:.2f} monthly budget reached")
-        return Plan("stream" if self._config.streaming else "transcribe", key, notes)
-
-    def _on_partial(self, text: str) -> None:
-        now = time.monotonic()
-        if now - self._last_preview < PREVIEW_INTERVAL or self._state != "recording":
-            return
-        self._last_preview = now
-        tail = text[-160:]
-        GLib.idle_add(self._feedback.notify, "Listening…", ("…" if len(text) > 160 else "") + tail)
+        return Plan(key, notes)
 
     def stop(self) -> None:
         if self._state != "recording" or self._plan is None:
@@ -207,10 +185,7 @@ class Daemon:
     def cancel(self) -> None:
         if self._state == "recording":
             self._clear_timeout()
-            audio = self._recorder.stop()
-            if self._plan and self._plan.session:
-                self._plan.session.abort()
-                self._record_stream(self._plan, seconds(audio))
+            self._recorder.stop()
             self._plan = None
             self._change_state("idle")
             self._feedback.notify("Dictation cancelled", "", 1500)
@@ -222,8 +197,6 @@ class Daemon:
         timings: dict[str, float] = {}
         try:
             if seconds(audio) < MIN_SECONDS:
-                if plan.session:
-                    plan.session.abort()
                 GLib.idle_add(self._finish_empty)
                 return
             started = time.monotonic()
@@ -239,7 +212,7 @@ class Daemon:
             if not raw:
                 GLib.idle_add(self._finish_empty)
                 return
-            if self._config.cleanup in ("openai", "codex"):
+            if self._config.cleanup == "openai":
                 GLib.idle_add(self._feedback.notify, "Cleaning up…", raw)
             started = time.monotonic()
             cleaned = clean(raw, self._config, plan.key)
@@ -270,23 +243,10 @@ class Daemon:
 
     def _transcribe(self, audio: bytes, plan: Plan) -> str:
         duration = seconds(audio)
-        if plan.session:
-            try:
-                return plan.session.finish()
-            except Exception as exc:
-                plan.notes.append(f"Streaming failed ({exc}), uploaded instead")
-            finally:
-                self._record_stream(plan, duration)
         text = openai_api.transcribe(plan.key, self._config, openai_api.wav_bytes(audio))
         model = self._config.transcribe_model
         usage.record("transcribe", model, duration, cost=audio_cost(model, duration))
         return text
-
-    def _record_stream(self, plan: Plan, duration: float) -> None:
-        if plan.session is None or not plan.session.connected:
-            return
-        model = self._config.stream_model
-        usage.record("stream", model, duration, cost=audio_cost(model, duration))
 
     def _save_failed(self, audio: bytes) -> Path:
         FAILED_DIR.mkdir(parents=True, exist_ok=True)

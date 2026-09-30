@@ -27,9 +27,9 @@ Requires:       gnome-shell
 
 %description
 Press a shortcut, say it, and Blurt types clean, filler-free text into
-whatever app you are in. Speech is transcribed with OpenAI, streaming while
-you speak or after you stop, then cleaned of fillers and false starts and
-typed into the focused window. A settings window keeps the API key in the
+whatever app you are in. Speech is transcribed with OpenAI when you stop
+talking, cleaned of fillers and false starts, and typed into the focused
+window. A settings window keeps the API key in the
 GNOME keyring and tracks spend against a monthly budget, and a top bar menu
 starts and stops dictation.
 
