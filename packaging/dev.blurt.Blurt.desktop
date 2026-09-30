@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Blurt
+Comment=Talk anywhere you can type
+Icon=dev.blurt.Blurt
+Exec=blurt settings
+Terminal=false
+StartupNotify=true
+Categories=Utility;Accessibility;
+Keywords=voice;dictation;speech;transcribe;dictate;typing;
+X-GNOME-UsesNotifications=true

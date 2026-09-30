@@ -1,4 +1,6 @@
+import os
 import re
+import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -72,13 +74,27 @@ def openai_cleanup(text: str, config: Config, key: str) -> str:
     return result.text
 
 
+def find_codex() -> Path:
+    found = shutil.which("codex")
+    if found:
+        return Path(found)
+    candidates = sorted(Path.home().glob(".nvm/versions/node/*/bin/codex"), reverse=True)
+    candidates += [Path.home() / ".local/bin/codex", Path("/usr/local/bin/codex")]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    raise RuntimeError("Codex CLI not found")
+
+
 def codex_cleanup(text: str, config: Config) -> str:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
+    codex = find_codex()
+    env = {**os.environ, "PATH": f"{codex.parent}:{os.environ.get('PATH', '/usr/bin')}"}
     prompt = f"{instructions(config)}\n\n{wrap(text)}"
     with tempfile.NamedTemporaryFile("r", dir=STATE_DIR, suffix=".txt") as out:
         subprocess.run(
             [
-                "codex",
+                str(codex),
                 "exec",
                 "--skip-git-repo-check",
                 "--ephemeral",
@@ -101,6 +117,7 @@ def codex_cleanup(text: str, config: Config) -> str:
             text=True,
             timeout=config.cleanup_timeout,
             check=True,
+            env=env,
         )
         cleaned = Path(out.name).read_text().strip()
     if not cleaned:

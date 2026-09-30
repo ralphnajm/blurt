@@ -6,7 +6,7 @@ from datetime import date, datetime
 import cairo
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango, PangoCairo
 
-from blurt import usage
+from blurt import __version__, account, usage
 from blurt.config import Config, load_config, save_config
 from blurt.data import ICONS_DIR
 from blurt.credentials import get_api_key, set_api_key
@@ -22,9 +22,7 @@ from blurt.pricing import (
     TRANSCRIBE_PER_MINUTE,
 )
 
-SERVICE = "blurt.service"
-KEYBINDING_SCHEMA = "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding"
-KEYBINDING_ROOT = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings"
+REPO_URL = "https://github.com/ralphnajm/blurt"
 KEYS_URL = "https://platform.openai.com/api-keys"
 USAGE_URL = "https://platform.openai.com/usage"
 REFRESH_SECONDS = 5
@@ -52,31 +50,17 @@ def tokens(count: int) -> str:
 
 def shortcut_label(name: str) -> str:
     try:
-        raw = subprocess.run(
-            [
-                "gsettings",
-                "get",
-                f"{KEYBINDING_SCHEMA}:{KEYBINDING_ROOT}/blurt-{name}/",
-                "binding",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=2,
-        ).stdout.strip()
-    except (OSError, subprocess.TimeoutExpired):
-        return "not set"
-    accel = raw.strip("'")
+        accel = account.shortcut(name)
+    except (OSError, subprocess.CalledProcessError):
+        accel = ""
     if not accel:
         return "not set"
     ok, key, mods = Gtk.accelerator_parse(accel)
     return Gtk.accelerator_get_label(key, mods) if ok else accel
 
 
-def service_active() -> bool:
-    result = subprocess.run(
-        ["systemctl", "--user", "is-active", SERVICE], capture_output=True, text=True
-    )
-    return result.stdout.strip() == "active"
+def shortcuts_summary() -> str:
+    return f"{shortcut_label('toggle')} start/stop · {shortcut_label('cancel')} cancel"
 
 
 class DailyChart(Gtk.DrawingArea):
@@ -219,6 +203,7 @@ class Window(Adw.ApplicationWindow):
         super().__init__(application=app, title="Blurt")
         self.set_default_size(620, 820)
         self.config = load_config()
+        self._account = account.status()
         self._save_id = 0
         self._toasts = Adw.ToastOverlay()
         self._stack = Adw.ViewStack()
@@ -233,8 +218,20 @@ class Window(Adw.ApplicationWindow):
         header.set_title_widget(
             Adw.ViewSwitcher(stack=self._stack, policy=Adw.ViewSwitcherPolicy.WIDE)
         )
+        menu = Gio.Menu()
+        menu.append("About Blurt", "win.about")
+        header.pack_end(Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu))
+        about = Gio.SimpleAction.new("about", None)
+        about.connect("activate", lambda *_: self._show_about())
+        self.add_action(about)
+        self._banner = Adw.Banner(
+            title="Blurt isn't set up for your account yet", button_label="Set up"
+        )
+        self._banner.connect("button-clicked", self._on_set_up)
+        self._banner.set_revealed(not self._account.complete)
         view = Adw.ToolbarView()
         view.add_top_bar(header)
+        view.add_top_bar(self._banner)
         view.set_content(self._stack)
         self._toasts.set_child(view)
         self.set_content(self._toasts)
@@ -260,17 +257,14 @@ class Window(Adw.ApplicationWindow):
         self._service_row = Adw.SwitchRow(
             title="Background service", subtitle="Listens for the dictation shortcut"
         )
-        self._service_row.set_active(service_active())
+        self._service_row.set_active(self._account.service_active)
         self._service_row.connect("notify::active", self._on_service_toggled)
         group.add(self._service_row)
-        shortcut = Adw.ActionRow(
-            title="Shortcuts",
-            subtitle=f"{shortcut_label('toggle')} start/stop · {shortcut_label('cancel')} cancel",
-        )
+        self._shortcut_row = Adw.ActionRow(title="Shortcuts", subtitle=shortcuts_summary())
         change = Gtk.Button(label="Change…", valign=Gtk.Align.CENTER)
         change.connect("clicked", lambda *_: subprocess.Popen(["gnome-control-center", "keyboard"]))
-        shortcut.add_suffix(change)
-        group.add(shortcut)
+        self._shortcut_row.add_suffix(change)
+        group.add(self._shortcut_row)
         self._access_row = Adw.ActionRow(title="Keyboard access")
         self._update_access_row()
         grant = Gtk.Button(label="Grant…", valign=Gtk.Align.CENTER)
@@ -522,9 +516,45 @@ class Window(Adw.ApplicationWindow):
             finish,
         )
 
+    def _show_about(self) -> None:
+        dialog = Adw.AboutDialog(
+            application_name="Blurt",
+            application_icon=APP_ID,
+            version=__version__,
+            developer_name="Ralph Najem",
+            comments="Talk anywhere you can type. Press a shortcut, say it, and Blurt types "
+            "clean, filler-free text into whatever app you are in.",
+            website=REPO_URL,
+            issue_url=f"{REPO_URL}/issues",
+        )
+        dialog.present(self)
+
+    def _on_set_up(self, _banner: Adw.Banner) -> None:
+        self._banner.set_button_label("")
+
+        def work() -> None:
+            status = account.set_up()
+            GLib.idle_add(self._after_set_up, status)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _after_set_up(self, status: account.Status) -> bool:
+        self._account = status
+        self._banner.set_revealed(not status.complete)
+        self._banner.set_button_label("Set up")
+        self._service_row.set_active(status.service_active)
+        self._shortcut_row.set_subtitle(shortcuts_summary())
+        if not status.complete:
+            self.toast("Setup didn't finish, see `blurt setup` in a terminal")
+        elif not status.extension_loaded:
+            self.toast("All set. Log out and back in once to show Blurt in the top bar")
+        else:
+            self.toast("All set")
+        return False
+
     def _on_service_toggled(self, row: Adw.SwitchRow, _param: object) -> None:
         action = ["enable", "--now"] if row.get_active() else ["disable", "--now"]
-        subprocess.run(["systemctl", "--user", *action, SERVICE], check=False)
+        subprocess.run(["systemctl", "--user", *action, account.SERVICE], check=False)
         self.toast("Service started" if row.get_active() else "Service stopped")
 
     def _update_access_row(self) -> None:
