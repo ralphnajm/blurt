@@ -29,13 +29,23 @@ INTROSPECTION = f"""
   <interface name="{INTERFACE}">
     <method name="Toggle"/>
     <method name="Start"/>
+    <method name="HoldStart"/>
     <method name="Stop"/>
     <method name="Cancel"/>
-    <method name="Authorize"/>
     <method name="Reload"/>
     <method name="Quit"/>
     <method name="Status"><arg type="s" direction="out"/></method>
+    <method name="HoldSettings">
+      <arg type="s" name="key" direction="out"/>
+      <arg type="d" name="delay" direction="out"/>
+    </method>
+    <method name="Message"><arg type="s" direction="out"/></method>
     <signal name="StateChanged"><arg type="s" name="state"/></signal>
+    <signal name="MessageChanged"><arg type="s" name="message"/></signal>
+    <signal name="HoldSettingsChanged">
+      <arg type="s" name="key"/>
+      <arg type="d" name="delay"/>
+    </signal>
   </interface>
 </node>
 """
@@ -58,35 +68,19 @@ class Daemon:
         self._feedback = Feedback(config)
         self._loop = GLib.MainLoop()
         self._bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
-        self._injector = Injector(config, self._bus)
+        self._injector = Injector(self._bus)
         self._cancelled = threading.Event()
         self._timeout_id = 0
         self._plan: Plan | None = None
+        self._message = ""
 
     def run(self) -> None:
-        self._register_app()
         node = Gio.DBusNodeInfo.new_for_xml(INTROSPECTION)
         self._bus.register_object(OBJECT_PATH, node.interfaces[0], self._on_call, None, None)
         Gio.bus_own_name_on_connection(
             self._bus, BUS_NAME, Gio.BusNameOwnerFlags.NONE, None, self._on_name_lost
         )
         self._loop.run()
-
-    def _register_app(self) -> None:
-        try:
-            self._bus.call_sync(
-                "org.freedesktop.portal.Desktop",
-                "/org/freedesktop/portal/desktop",
-                "org.freedesktop.host.portal.Registry",
-                "Register",
-                GLib.Variant("(sa{sv})", (APP_ID, {})),
-                None,
-                Gio.DBusCallFlags.NONE,
-                3000,
-                None,
-            )
-        except GLib.Error as exc:
-            print(f"Portal app registration failed: {exc.message}", flush=True)
 
     def _on_name_lost(self, *_args: object) -> None:
         print(f"Could not own {BUS_NAME}; is another daemon running?", flush=True)
@@ -107,6 +101,8 @@ class Daemon:
                 self.toggle()
             case "Start":
                 self.start()
+            case "HoldStart":
+                self.start()
             case "Stop":
                 self.stop()
             case "Cancel":
@@ -117,11 +113,14 @@ class Daemon:
                 invocation.return_value(None)
                 GLib.idle_add(self.quit)
                 return
-            case "Authorize":
-                threading.Thread(target=self._authorize, args=(invocation,), daemon=True).start()
-                return
             case "Status":
                 invocation.return_value(GLib.Variant("(s)", (self._state,)))
+                return
+            case "HoldSettings":
+                invocation.return_value(self._hold_settings())
+                return
+            case "Message":
+                invocation.return_value(GLib.Variant("(s)", (self._message,)))
                 return
         invocation.return_value(None)
 
@@ -130,11 +129,15 @@ class Daemon:
             self.stop()
         elif self._state == "idle":
             self.start()
-        else:
-            self._feedback.notify("Still processing", "Wait for the last dictation to finish", 2000)
 
     def reload(self) -> None:
         update_in_place(self._config, load_config())
+        self._bus.emit_signal(
+            None, OBJECT_PATH, INTERFACE, "HoldSettingsChanged", self._hold_settings()
+        )
+
+    def _hold_settings(self) -> GLib.Variant:
+        return GLib.Variant("(sd)", (self._config.hold_key, float(self._config.hold_delay)))
 
     def start(self) -> None:
         if self._state != "idle":
@@ -153,8 +156,7 @@ class Daemon:
         self._cancelled.clear()
         self._change_state("recording")
         self._feedback.sound("start")
-        body = " · ".join(["Press the shortcut again to finish", *plan.notes])
-        self._feedback.notify("Listening…", body)
+        self._set_message(" · ".join(plan.notes))
         self._timeout_id = GLib.timeout_add_seconds(self._config.max_seconds, self._on_max_duration)
 
     def _make_plan(self) -> Plan:
@@ -178,7 +180,6 @@ class Daemon:
         audio = self._recorder.stop()
         self._feedback.sound("stop")
         self._change_state("processing")
-        self._feedback.notify("Transcribing…", f"{seconds(audio):.1f}s of audio")
         plan, self._plan = self._plan, None
         threading.Thread(target=self._process, args=(audio, plan), daemon=True).start()
 
@@ -188,10 +189,8 @@ class Daemon:
             self._recorder.stop()
             self._plan = None
             self._change_state("idle")
-            self._feedback.notify("Dictation cancelled", "", 1500)
         elif self._state == "processing":
             self._cancelled.set()
-            self._feedback.notify("Dictation cancelled", "", 1500)
 
     def _process(self, audio: bytes, plan: Plan) -> None:
         timings: dict[str, float] = {}
@@ -212,8 +211,6 @@ class Daemon:
             if not raw:
                 GLib.idle_add(self._finish_empty)
                 return
-            if self._config.cleanup == "openai":
-                GLib.idle_add(self._feedback.notify, "Cleaning up…", raw)
             started = time.monotonic()
             cleaned = clean(raw, self._config, plan.key)
             timings["cleanup"] = time.monotonic() - started
@@ -231,7 +228,7 @@ class Daemon:
             except Exception as exc:
                 self._record_history(raw, text, None, timings)
                 self._injector.copy(text)
-                GLib.idle_add(self._fail, "Couldn't type, copied to clipboard", f"{exc}")
+                GLib.idle_add(self._fail, "Copied to clipboard instead of typing", f"{exc}")
                 return
             timings["inject"] = time.monotonic() - started
             self._record_history(raw, text, mode, timings)
@@ -257,17 +254,17 @@ class Daemon:
         return target
 
     def _finish_ok(self, text: str, warning: str | None) -> bool:
-        self._feedback.notify(warning or "Dictated", text.strip(), 3000)
+        self._set_message(warning or "")
         return False
 
     def _finish_empty(self) -> bool:
-        self._feedback.notify("No speech detected", "", 2000)
+        self._set_message("No speech detected")
         return False
 
     def _fail(self, summary: str, body: str) -> bool:
         print(f"{summary}: {body}", flush=True)
         self._feedback.sound("error")
-        self._feedback.notify(summary, body, 6000, urgent=True)
+        self._set_message(f"{summary}: {body}")
         if self._state != "processing":
             self._change_state("idle")
         return False
@@ -275,6 +272,14 @@ class Daemon:
     def _set_idle(self) -> bool:
         self._change_state("idle")
         return False
+
+    def _set_message(self, message: str) -> None:
+        if message == self._message:
+            return
+        self._message = message
+        self._bus.emit_signal(
+            None, OBJECT_PATH, INTERFACE, "MessageChanged", GLib.Variant("(s)", (message,))
+        )
 
     def _change_state(self, state: State) -> None:
         if state == self._state:
@@ -289,13 +294,6 @@ class Daemon:
             self.cancel()
         self._loop.quit()
         return False
-
-    def _authorize(self, invocation: Gio.DBusMethodInvocation) -> None:
-        try:
-            self._injector.authorize()
-            invocation.return_value(None)
-        except Exception as exc:
-            invocation.return_dbus_error(f"{INTERFACE}.Error", str(exc))
 
     def _on_max_duration(self) -> bool:
         self._timeout_id = 0

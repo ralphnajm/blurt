@@ -98,7 +98,6 @@ def main() -> None:
     sub.add_parser("teardown", help="switch Blurt off for this account")
     for name in ("toggle", "start", "stop", "cancel", "status"):
         sub.add_parser(name, help=f"{name} dictation" if name != "status" else "show daemon state")
-    sub.add_parser("authorize", help="grant keyboard access through the portal dialog")
     sub.add_parser("daemon", help="run the background service")
     transcribe = sub.add_parser("transcribe", help="transcribe and clean an audio file with OpenAI")
     transcribe.add_argument("file")
@@ -120,10 +119,6 @@ def main() -> None:
         case "status":
             reply = call("Status")
             print(reply.unpack()[0] if reply else "unknown")
-        case "authorize":
-            print("Allow remote interaction in the dialog that opens…")
-            call("Authorize", timeout_ms=310_000)
-            print("Keyboard access granted and remembered.")
         case "transcribe":
             cmd_transcribe(args)
         case "history":

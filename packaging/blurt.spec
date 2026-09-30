@@ -20,9 +20,7 @@ Requires:       libadwaita
 Requires:       libsecret
 Requires:       portaudio
 Requires:       wl-clipboard
-Requires:       libnotify
 Requires:       libcanberra-gtk3
-Requires:       xdg-desktop-portal
 Requires:       gnome-shell
 
 %description

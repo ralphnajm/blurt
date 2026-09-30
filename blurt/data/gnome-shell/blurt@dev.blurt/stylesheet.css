@@ -5,3 +5,12 @@
 .blurt-status {
   font-weight: bold;
 }
+
+.blurt-attention {
+  color: #f8e45c;
+}
+
+.blurt-message {
+  font-size: smaller;
+  max-width: 22em;
+}

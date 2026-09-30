@@ -12,7 +12,6 @@ from blurt.data import ICONS_DIR
 from blurt.credentials import get_api_key, set_api_key
 from blurt.daemon import APP_ID, BUS_NAME, INTERFACE, OBJECT_PATH
 from blurt.openai_api import check_key
-from blurt.portal import TOKEN_PATH
 from blurt.pricing import (
     PRICES_AS_OF,
     CLEANUP_MODEL,
@@ -263,12 +262,28 @@ class Window(Adw.ApplicationWindow):
         change.connect("clicked", lambda *_: subprocess.Popen(["gnome-control-center", "keyboard"]))
         self._shortcut_row.add_suffix(change)
         group.add(self._shortcut_row)
-        self._access_row = Adw.ActionRow(title="Keyboard access")
-        self._update_access_row()
-        grant = Gtk.Button(label="Grant…", valign=Gtk.Align.CENTER)
-        grant.connect("clicked", self._on_authorize)
-        self._access_row.add_suffix(grant)
-        group.add(self._access_row)
+        group.add(
+            self._combo(
+                "Hold to talk",
+                None,
+                [("off", "Off"), ("ctrl", "Ctrl"), ("alt", "Alt"), ("shift", "Shift")],
+                "hold_key",
+                lambda key: (
+                    "Hold the key to start, release it to stop"
+                    if key != "off"
+                    else "Only the shortcuts start dictation"
+                ),
+            )
+        )
+        self._hold_delay_row = Adw.SpinRow.new_with_range(0.3, 3.0, 0.1)
+        self._hold_delay_row.set_title("Hold delay")
+        self._hold_delay_row.set_subtitle("Seconds to hold before recording starts")
+        self._hold_delay_row.set_digits(1)
+        self._hold_delay_row.set_value(self.config.hold_delay)
+        self._hold_delay_row.connect(
+            "notify::value", lambda row, _p: self._set("hold_delay", round(row.get_value(), 1))
+        )
+        group.add(self._hold_delay_row)
         return group
 
     def _openai_group(self) -> Adw.PreferencesGroup:
@@ -371,18 +386,8 @@ class Window(Adw.ApplicationWindow):
 
     def _typing_group(self) -> Adw.PreferencesGroup:
         group = Adw.PreferencesGroup(title="Typing and feedback")
-        group.add(
-            self._combo(
-                "Insert text",
-                "Auto types plain text and pastes accents or symbols",
-                [("auto", "Auto"), ("type", "Type"), ("paste", "Paste")],
-                "inject",
-            )
-        )
-        group.add(self._entry("Paste shortcut", "paste_keys", None))
         group.add(self._switch("Add a trailing space", None, "trailing_space"))
         group.add(self._switch("Sounds", None, "sounds"))
-        group.add(self._switch("Notifications", None, "notifications"))
         return group
 
     def _combo(
@@ -446,6 +451,7 @@ class Window(Adw.ApplicationWindow):
     def _sync_sensitivity(self) -> None:
         c: Config = self.config
         self._reasoning_row.set_sensitive(c.cleanup == "openai")
+        self._hold_delay_row.set_sensitive(c.hold_key != "off")
 
     def _call_daemon(
         self, method: str, timeout_ms: int = 3000, done: Callable[[str | None], None] | None = None
@@ -514,23 +520,6 @@ class Window(Adw.ApplicationWindow):
         action = ["enable", "--now"] if row.get_active() else ["disable", "--now"]
         subprocess.run(["systemctl", "--user", *action, account.SERVICE], check=False)
         self.toast("Service started" if row.get_active() else "Service stopped")
-
-    def _update_access_row(self) -> None:
-        granted = TOKEN_PATH.exists()
-        self._access_row.set_subtitle(
-            "Granted, dictation can type into apps"
-            if granted
-            else "Not granted yet, needed to type into apps"
-        )
-
-    def _on_authorize(self, _button: Gtk.Button) -> None:
-        self.toast("Allow remote interaction in the dialog")
-
-        def done(error: str | None) -> None:
-            self._update_access_row()
-            self.toast(f"Not granted: {error}" if error else "Keyboard access granted")
-
-        self._call_daemon("Authorize", 310_000, done)
 
     def _on_key_apply(self, row: Adw.PasswordEntryRow) -> None:
         key = row.get_text().strip()
