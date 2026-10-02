@@ -4,9 +4,9 @@ from collections.abc import Callable
 from datetime import date, datetime
 
 import cairo
-from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango, PangoCairo
+from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango, PangoCairo
 
-from blurt import __version__, account, usage
+from blurt import __version__, account, history, usage
 from blurt.config import Config, load_config, save_config
 from blurt.data import ICONS_DIR
 from blurt.credentials import get_api_key, set_api_key
@@ -23,6 +23,7 @@ REPO_URL = "https://github.com/ralphnajm/blurt"
 KEYS_URL = "https://platform.openai.com/api-keys"
 USAGE_URL = "https://platform.openai.com/usage"
 REFRESH_SECONDS = 5
+HISTORY_LINES = 4
 
 
 def money(value: float) -> str:
@@ -54,6 +55,17 @@ def shortcut_label(name: str) -> str:
         return "not set"
     ok, key, mods = Gtk.accelerator_parse(accel)
     return Gtk.accelerator_get_label(key, mods) if ok else accel
+
+
+def when(at: datetime) -> str:
+    days = (date.today() - at.date()).days
+    if days == 0:
+        return f"Today, {at:%H:%M}"
+    if days == 1:
+        return f"Yesterday, {at:%H:%M}"
+    if at.year == date.today().year:
+        return at.strftime("%b %-d, %H:%M")
+    return at.strftime("%b %-d %Y, %H:%M")
 
 
 def shortcuts_summary() -> str:
@@ -216,6 +228,7 @@ class Window(Adw.ApplicationWindow):
             Adw.ViewSwitcher(stack=self._stack, policy=Adw.ViewSwitcherPolicy.WIDE)
         )
         menu = Gio.Menu()
+        menu.append("Show History", "app.history")
         menu.append("About Blurt", "win.about")
         header.pack_end(Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu))
         about = Gio.SimpleAction.new("about", None)
@@ -664,19 +677,182 @@ class Window(Adw.ApplicationWindow):
         return label
 
 
-class App(Adw.Application):
-    def __init__(self) -> None:
-        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
-        self.connect("activate", self._on_activate)
+class HistoryItem(GObject.Object):
+    def __init__(self, entry: history.Entry) -> None:
+        super().__init__()
+        self.entry = entry
+        self.needle = entry.text.casefold()
 
-    def _on_activate(self, app: Adw.Application) -> None:
+
+class HistoryWindow(Adw.ApplicationWindow):
+    def __init__(self, app: Adw.Application) -> None:
+        super().__init__(application=app, title="Blurt History")
+        self.set_default_size(560, 680)
+        self._offset = 0
+        self._query = ""
+        self._store = Gio.ListStore(item_type=HistoryItem)
+        self._filter = Gtk.CustomFilter.new(self._matches)
+        filtered = Gtk.FilterListModel(model=self._store, filter=self._filter)
+        filtered.connect("items-changed", lambda *_: self._sync_empty())
+        self._filtered = filtered
+
+        factory = Gtk.SignalListItemFactory()
+        factory.connect("setup", self._setup_row)
+        factory.connect("bind", self._bind_row)
+        self._list = Gtk.ListView(
+            model=Gtk.NoSelection(model=filtered),
+            factory=factory,
+            single_click_activate=True,
+            show_separators=True,
+        )
+        self._list.add_css_class("rich-list")
+        self._list.connect("activate", lambda _l, position: self._copy_at(position))
+        scrolled = Gtk.ScrolledWindow(
+            child=self._list, hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True
+        )
+
+        self._empty = Adw.StatusPage(icon_name="edit-paste-symbolic")
+        self._content = Gtk.Stack()
+        self._content.add_named(scrolled, "list")
+        self._content.add_named(self._empty, "empty")
+
+        self._search = Gtk.SearchEntry(placeholder_text="Search transcriptions")
+        self._search.set_width_chars(30)
+        self._search.connect("search-changed", self._on_search)
+        self._search.set_key_capture_widget(self)
+        header = Adw.HeaderBar(title_widget=self._search)
+        view = Adw.ToolbarView()
+        view.add_top_bar(header)
+        view.set_content(self._content)
+        self._toasts = Adw.ToastOverlay(child=view)
+        self.set_content(self._toasts)
+
+        close = Gtk.ShortcutController()
+        close.add_shortcut(
+            Gtk.Shortcut(
+                trigger=Gtk.ShortcutTrigger.parse_string("Escape"),
+                action=Gtk.CallbackAction.new(self._on_escape),
+            )
+        )
+        self.add_controller(close)
+
+        self._load()
+        self._monitor = Gio.File.new_for_path(str(history.HISTORY_PATH)).monitor_file(
+            Gio.FileMonitorFlags.NONE, None
+        )
+        self._monitor.connect("changed", lambda *_: self._load())
+
+    def _load(self) -> None:
+        entries, self._offset, reset = history.read(self._offset)
+        if reset:
+            self._store.remove_all()
+        for entry in entries:
+            self._store.insert(0, HistoryItem(entry))
+        self._sync_empty()
+
+    def _setup_row(self, _factory: Gtk.SignalListItemFactory, item: Gtk.ListItem) -> None:
+        text = Gtk.Label(
+            xalign=0,
+            wrap=True,
+            wrap_mode=Pango.WrapMode.WORD_CHAR,
+            lines=HISTORY_LINES,
+            ellipsize=Pango.EllipsizeMode.END,
+        )
+        meta = Gtk.Label(xalign=0)
+        meta.add_css_class("caption")
+        meta.add_css_class("dim-label")
+        labels = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, hexpand=True)
+        labels.append(text)
+        labels.append(meta)
+        copy = Gtk.Button(
+            icon_name="edit-copy-symbolic", valign=Gtk.Align.CENTER, tooltip_text="Copy"
+        )
+        copy.add_css_class("flat")
+        copy.connect("clicked", lambda _b: self._copy(item.get_item().entry))
+        row = Gtk.Box(spacing=12)
+        for side in ("top", "bottom"):
+            getattr(row, f"set_margin_{side}")(6)
+        for side in ("start", "end"):
+            getattr(row, f"set_margin_{side}")(12)
+        row.append(labels)
+        row.append(copy)
+        item.set_child(row)
+
+    def _bind_row(self, _factory: Gtk.SignalListItemFactory, item: Gtk.ListItem) -> None:
+        entry = item.get_item().entry
+        labels = item.get_child().get_first_child()
+        text, meta = labels.get_first_child(), labels.get_last_child()
+        text.set_label(entry.text)
+        text.set_tooltip_text(entry.text if len(entry.text) > 200 else None)
+        meta.set_label(when(entry.at) if entry.typed else f"{when(entry.at)} · not typed")
+
+    def _matches(self, item: HistoryItem) -> bool:
+        return not self._query or self._query in item.needle
+
+    def _on_search(self, entry: Gtk.SearchEntry) -> None:
+        self._query = entry.get_text().strip().casefold()
+        self._filter.changed(Gtk.FilterChange.DIFFERENT)
+
+    def _on_escape(self, *_args: object) -> bool:
+        if self._search.get_text():
+            self._search.set_text("")
+        else:
+            self.close()
+        return True
+
+    def _sync_empty(self) -> None:
+        if self._filtered.get_n_items():
+            self._content.set_visible_child_name("list")
+            return
+        if self._store.get_n_items():
+            self._empty.set_title("No matches")
+            self._empty.set_description("Nothing you dictated contains that")
+        else:
+            self._empty.set_title("No transcriptions yet")
+            self._empty.set_description("Everything you dictate shows up here")
+        self._content.set_visible_child_name("empty")
+
+    def _copy_at(self, position: int) -> None:
+        item = self._filtered.get_item(position)
+        if item is not None:
+            self._copy(item.entry)
+
+    def _copy(self, entry: history.Entry) -> None:
+        self.get_clipboard().set(entry.text)
+        self._toasts.add_toast(Adw.Toast(title="Copied to clipboard", timeout=2))
+
+
+class App(Adw.Application):
+    def __init__(self, start: str) -> None:
+        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
+        self._start = start
+        self.connect("startup", self._on_startup)
+        self.connect("activate", lambda *_: self.show(self._start))
+        for name in ("settings", "history"):
+            action = Gio.SimpleAction.new(name, None)
+            action.connect("activate", lambda _a, _p, name=name: self.show(name))
+            self.add_action(action)
+
+    def _on_startup(self, _app: Adw.Application) -> None:
         display = Gdk.Display.get_default()
         if display is not None:
             Gtk.IconTheme.get_for_display(display).add_search_path(str(ICONS_DIR))
         Gtk.Window.set_default_icon_name(APP_ID)
-        window = self.get_active_window() or Window(self)
-        window.present()
+
+    def show(self, name: str) -> None:
+        kind = HistoryWindow if name == "history" else Window
+        window = next((w for w in self.get_windows() if isinstance(w, kind)), None)
+        (window or kind(self)).present()
 
 
-def run() -> int:
-    return App().run([])
+def run(start: str = "settings") -> int:
+    app = App(start)
+    app.register(None)
+    if app.get_is_remote():
+        # Blurt is already open; ask that instance to show the window and exit.
+        app.activate_action(start, None)
+        connection = app.get_dbus_connection()
+        if connection is not None:
+            connection.flush_sync(None)
+        return 0
+    return app.run([])

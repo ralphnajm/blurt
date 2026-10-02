@@ -32,7 +32,7 @@ To switch Blurt off for your account run `blurt teardown`; `sudo dnf remove blur
 
 ## Use
 
-Hold **Ctrl** for a second until you hear the start sound, speak, and release it. Super+D starts and stops dictation without holding anything and Super+Shift+D cancels. The speech bubble in the top bar turns red while recording, shows dots while transcribing and turns yellow when something went wrong; its menu explains what, and offers start, settings and quit.
+Hold **Ctrl** for a second until you hear the start sound, speak, and release it. Super+D starts and stops dictation without holding anything and Super+Shift+D cancels. The speech bubble in the top bar turns red while recording, shows dots while transcribing and turns yellow when something went wrong; its menu explains what, and offers start, history, settings and quit. **Show history** lists everything you've dictated, newest first and searchable; click an entry to copy it.
 
 The settings window picks the hold key and delay, the transcription model, the spoken language, words Blurt should spell correctly, how hard the cleanup pass thinks, and a monthly budget that either warns you or stops dictation. The Usage tab shows estimated spend per day and per model, computed from audio length and token counts at OpenAI's list prices; your OpenAI invoice remains the source of truth.
 

@@ -9,3 +9,8 @@ StartupNotify=true
 Categories=Utility;Accessibility;
 Keywords=voice;dictation;speech;transcribe;dictate;typing;
 X-GNOME-UsesNotifications=true
+Actions=history;
+
+[Desktop Action history]
+Name=Show History
+Exec=blurt history --window

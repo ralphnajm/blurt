@@ -1,16 +1,15 @@
 import argparse
-import json
 import sys
 import time
 from pathlib import Path
 
 from gi.repository import Gio, GLib
 
-from blurt import __version__, account, gui, openai_api
+from blurt import __version__, account, gui, history, openai_api
 from blurt.cleanup import clean
 from blurt.config import CONFIG_PATH, load_config
 from blurt.credentials import get_api_key
-from blurt.daemon import BUS_NAME, HISTORY_PATH, INTERFACE, OBJECT_PATH, Daemon
+from blurt.daemon import BUS_NAME, INTERFACE, OBJECT_PATH, Daemon
 
 
 def call(method: str, timeout_ms: int = 5000) -> GLib.Variant | None:
@@ -80,11 +79,11 @@ def cmd_transcribe(args: argparse.Namespace) -> None:
 
 
 def cmd_history(args: argparse.Namespace) -> None:
-    if not HISTORY_PATH.exists():
-        return
-    for line in HISTORY_PATH.read_text().splitlines()[-args.n :]:
-        entry = json.loads(line)
-        print(f"[{entry['at']}] {entry['text'].strip()}")
+    if args.window:
+        sys.exit(gui.run("history"))
+    entries, _offset, _reset = history.read()
+    for entry in entries[-args.n :]:
+        print(f"[{entry.at.isoformat()}] {entry.text}")
 
 
 def main() -> None:
@@ -102,8 +101,9 @@ def main() -> None:
     transcribe = sub.add_parser("transcribe", help="transcribe and clean an audio file with OpenAI")
     transcribe.add_argument("file")
     transcribe.add_argument("--cleanup", choices=["openai", "basic", "off"])
-    history = sub.add_parser("history", help="show recent dictations")
-    history.add_argument("-n", type=int, default=10)
+    history_cmd = sub.add_parser("history", help="show recent dictations")
+    history_cmd.add_argument("-n", type=int, default=10)
+    history_cmd.add_argument("--window", action="store_true", help="open the history window")
     args = parser.parse_args()
 
     match args.command:

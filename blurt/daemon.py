@@ -1,4 +1,3 @@
-import json
 import threading
 import time
 from dataclasses import dataclass, field
@@ -8,7 +7,7 @@ from typing import Literal
 
 from gi.repository import Gio, GLib
 
-from blurt import openai_api, usage
+from blurt import history, openai_api, usage
 from blurt.cleanup import clean
 from blurt.config import STATE_DIR, Config, load_config, update_in_place
 from blurt.credentials import get_api_key
@@ -21,7 +20,6 @@ APP_ID = "dev.blurt.Blurt"
 BUS_NAME = "dev.blurt.Daemon"
 OBJECT_PATH = "/dev/blurt/Daemon"
 INTERFACE = "dev.blurt.Daemon"
-HISTORY_PATH = STATE_DIR / "history.jsonl"
 FAILED_DIR = STATE_DIR / "failed"
 KEEP_FAILED = 20
 INTROSPECTION = f"""
@@ -220,18 +218,18 @@ class Daemon:
             if self._config.trailing_space and text and not text.endswith((" ", "\n")):
                 text += " "
             if self._cancelled.is_set():
-                self._record_history(raw, text, None, timings)
+                history.record(raw, text, None, timings)
                 return
             started = time.monotonic()
             try:
                 mode = self._injector.inject(text)
             except Exception as exc:
-                self._record_history(raw, text, None, timings)
+                history.record(raw, text, None, timings)
                 self._injector.copy(text)
                 GLib.idle_add(self._fail, "Copied to clipboard instead of typing", f"{exc}")
                 return
             timings["inject"] = time.monotonic() - started
-            self._record_history(raw, text, mode, timings)
+            history.record(raw, text, mode, timings)
             GLib.idle_add(self._finish_ok, text, " · ".join(plan.notes) or None)
         except Exception as exc:
             GLib.idle_add(self._fail, "Dictation failed", f"{exc}")
@@ -304,17 +302,3 @@ class Daemon:
         if self._timeout_id:
             GLib.source_remove(self._timeout_id)
             self._timeout_id = 0
-
-    def _record_history(
-        self, raw: str, text: str, mode: str | None, timings: dict[str, float]
-    ) -> None:
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
-        entry = {
-            "at": datetime.now().isoformat(timespec="seconds"),
-            "raw": raw,
-            "text": text,
-            "inject": mode,
-            "timings": {k: round(v, 2) for k, v in timings.items()},
-        }
-        with HISTORY_PATH.open("a") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")

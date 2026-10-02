@@ -83,8 +83,12 @@ class BlurtIndicator extends PanelMenu.Button {
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
+        const historyItem = new PopupMenu.PopupMenuItem('Show history…');
+        historyItem.connect('activate', () => this._openApp('history'));
+        this.menu.addMenuItem(historyItem);
+
         const settingsItem = new PopupMenu.PopupMenuItem('Settings…');
-        settingsItem.connect('activate', () => this._openSettings());
+        settingsItem.connect('activate', () => this._openApp());
         this.menu.addMenuItem(settingsItem);
 
         const quitItem = new PopupMenu.PopupMenuItem('Quit Blurt');
@@ -286,13 +290,18 @@ class BlurtIndicator extends PanelMenu.Button {
             });
     }
 
-    _openSettings() {
+    _openApp(action = null) {
         const app = Gio.DesktopAppInfo.new(`${APP_ID}.desktop`);
-        if (app) {
-            app.launch([], global.create_app_launch_context(0, -1));
+        const context = global.create_app_launch_context(0, -1);
+        if (app && action && app.list_actions().includes(action)) {
+            app.launch_action(action, context);
             return;
         }
-        GLib.spawn_command_line_async('blurt settings');
+        if (app && !action) {
+            app.launch([], context);
+            return;
+        }
+        GLib.spawn_command_line_async(action === 'history' ? 'blurt history --window' : 'blurt settings');
     }
 
     InsertAsync([text], invocation) {
