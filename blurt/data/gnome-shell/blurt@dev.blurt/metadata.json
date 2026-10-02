@@ -2,5 +2,5 @@
   "uuid": "blurt@dev.blurt",
   "name": "Blurt",
   "description": "Top bar menu for Blurt voice typing: start or stop dictation, open settings, quit.",
-  "shell-version": ["48", "49", "50"]
+  "shell-version": ["46", "47", "48", "49", "50"]
 }

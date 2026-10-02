@@ -6,20 +6,29 @@ Talk anywhere you can type. Hold Ctrl, say it, let go, and Blurt types clean, fi
 
 Blurt records while you hold the key, sends the audio to OpenAI for transcription, removes the ums, false starts and repeated words with a quick `gpt-6-luna` pass, and hands the result to GNOME's input method, the same path the on-screen keyboard uses. Text lands in one piece in terminals, browsers and GTK apps, accents and emoji included. Apps without input-method support get the text typed as key presses instead.
 
-It is built for Fedora Workstation with GNOME on Wayland and needs an [OpenAI API key](https://platform.openai.com/api-keys). A typical day of dictation costs a few cents.
+It is built for Fedora Workstation and Ubuntu 24.04 or later with GNOME on Wayland and needs an [OpenAI API key](https://platform.openai.com/api-keys). A typical day of dictation costs a few cents.
 
 ## Install
 
-Build the RPM from the latest release tag and install it:
+Build a package from the latest release tag and install it. On Fedora:
 
 ```sh
 make build-deps   # once: rpm-build and friends
 make rpm install
 ```
 
+On Ubuntu:
+
+```sh
+make build-deps   # once: pip and desktop-file-utils
+make deb install  # same as sudo apt install ./dist/blurt_X.Y.Z-1_all.deb
+```
+
+apt pulls in the dependencies from the Ubuntu archive. The `.deb` bundles `sounddevice`, the one Python library Ubuntu doesn't package.
+
 Then open Blurt from the app grid, click **Set up** in the banner, paste your API key and log out and back in once so GNOME Shell loads the top bar menu. Later releases install the same way; the service restarts on its own, the top bar menu picks up changes at your next login.
 
-To switch Blurt off for your account run `blurt teardown`; `sudo dnf remove blurt` removes it from the system.
+To switch Blurt off for your account run `blurt teardown`; `sudo dnf remove blurt` or `sudo apt remove blurt` removes it from the system.
 
 ## Use
 
@@ -45,10 +54,10 @@ make check                   # format, lint, types
 
 ## Release
 
-Versions come from `pyproject.toml` and every release is a `vX.Y.Z` tag. RPMs are only ever built from a tag through a clean `git archive`, so local changes never reach an installed build.
+Versions come from `pyproject.toml` and every release is a `vX.Y.Z` tag. Packages are only ever built from a tag through a clean `git archive`, so local changes never reach an installed build.
 
 ```sh
 make release VERSION=0.5.0 NOTES="What changed"
 git push --follow-tags
-make rpm install
+make rpm install   # or make deb install
 ```

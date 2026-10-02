@@ -125,7 +125,9 @@ class BlurtIndicator extends PanelMenu.Button {
         this._message = '';
         this._unseen = false;
         this._daemonOwner = null;
-        this._keyboard = global.stage.context.get_backend().get_default_seat()
+        // Older GNOME Shell releases have no stage context.
+        const backend = global.stage.context?.get_backend() ?? Clutter.get_default_backend();
+        this._keyboard = backend.get_default_seat()
             .create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
         this._exported = Gio.DBusExportedObject.wrapJSObject(SHELL_INTERFACE_XML, this);
         this._exported.export(Gio.DBus.session, SHELL_OBJECT_PATH);
