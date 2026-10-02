@@ -24,7 +24,10 @@ deb:
 ifneq ($(APT),)
 install:
 	@test -n "$(LATEST_DEB)" || { echo "No .deb in dist/, run make deb first"; exit 1; }
-	sudo apt-get install -y ./$(LATEST_DEB)
+	@# apt reads the file as _apt, which usually can't enter the home directory.
+	tmp="$$(mktemp -d)" && chmod 755 "$$tmp" && cp "$(LATEST_DEB)" "$$tmp/" && \
+		sudo apt-get install -y "$$tmp/$(notdir $(LATEST_DEB))"; \
+		status=$$?; rm -rf "$$tmp"; exit $$status
 
 build-deps:
 	sudo apt-get install -y python3-pip desktop-file-utils
