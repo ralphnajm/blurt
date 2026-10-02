@@ -1,6 +1,6 @@
 [project]
 name = "blurt"
-version = "0.4.0"
+version = "0.5.0"
 description = "Talk anywhere you can type. Press a shortcut, say it, and Blurt types clean, filler-free text into whatever app you are in."
 requires-python = ">=3.14,<3.15"
 authors = [{ name = "Ralph Najem", email = "me@ralphnajem.com" }]
