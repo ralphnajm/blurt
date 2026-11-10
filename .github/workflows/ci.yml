@@ -17,7 +17,7 @@ jobs:
     name: Checks (Ubuntu 24.04)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -32,7 +32,7 @@ jobs:
     needs: check
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-4-dev libadwaita-1-dev libsecret-1-dev libasound2-dev
@@ -41,7 +41,7 @@ jobs:
         with:
           tool: cargo-deb
       - run: make deb
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: blurt-deb
           path: target/debian/*.deb
@@ -54,13 +54,13 @@ jobs:
     steps:
       - run: dnf install -y git make gcc rustup rpm-build gtk4-devel libadwaita-devel libsecret-devel alsa-lib-devel
       - run: rustup-init -y --profile minimal --default-toolchain none
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-generate-rpm
       - run: make rpm
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: blurt-rpm
           path: target/generate-rpm/*.rpm
@@ -75,7 +75,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Find the version
         id: version
         run: |
@@ -87,7 +87,7 @@ jobs:
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         if: steps.version.outputs.exists == 'false'
         with:
           path: dist

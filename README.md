@@ -32,7 +32,7 @@ Your audio and transcripts go to OpenAI. Settings live in `~/.config/blurt/confi
 
 ## Develop
 
-Blurt is a Rust program (GTK 4 and libadwaita) plus a GNOME Shell extension for the top bar menu and typing, in `data/gnome-shell/`. Build dependencies:
+Blurt is a Rust program (GTK 4 and libadwaita) plus a GNOME Shell extension for the top bar menu and typing, in `data/gnome-shell/`. CI builds, checks and packages every push, so you don't need a local toolchain to release. To build locally, install the dependencies first:
 
 ```sh
 sudo dnf install gtk4-devel libadwaita-devel libsecret-devel alsa-lib-devel          # Fedora
