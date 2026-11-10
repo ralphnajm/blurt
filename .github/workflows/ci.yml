@@ -1,0 +1,107 @@
+name: CI
+
+# Every push to main is checked and packaged. When the version in Cargo.toml
+# has no GitHub release yet, a release is created with the packages attached
+# and the version's CHANGELOG.md section as its notes.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Checks (Ubuntu 24.04)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libadwaita-1-dev libsecret-1-dev libasound2-dev desktop-file-utils appstream
+      # rustup installs the toolchain pinned in rust-toolchain.toml.
+      - run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+      - run: make check
+
+  deb:
+    name: Debian package (Ubuntu 24.04)
+    needs: check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libadwaita-1-dev libsecret-1-dev libasound2-dev
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deb
+      - run: make deb
+      - uses: actions/upload-artifact@v5
+        with:
+          name: blurt-deb
+          path: target/debian/*.deb
+
+  rpm:
+    name: RPM package (Fedora)
+    needs: check
+    runs-on: ubuntu-24.04
+    container: fedora:44
+    steps:
+      - run: dnf install -y git make gcc rustup rpm-build gtk4-devel libadwaita-devel libsecret-devel alsa-lib-devel
+      - run: rustup-init -y --profile minimal --default-toolchain none
+      - uses: actions/checkout@v5
+      - run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-generate-rpm
+      - run: make rpm
+      - uses: actions/upload-artifact@v5
+        with:
+          name: blurt-rpm
+          path: target/generate-rpm/*.rpm
+
+  release:
+    name: GitHub release
+    needs: [deb, rpm]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Find the version
+        id: version
+        run: |
+          version="$(scripts/version.sh)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if gh release view "v$version" > /dev/null 2>&1; then
+            echo "v$version is already released"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/download-artifact@v5
+        if: steps.version.outputs.exists == 'false'
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create the release
+        if: steps.version.outputs.exists == 'false'
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          scripts/release-notes.sh "$version" > notes.md
+          # A pre-release (1.0.0-alpha.1) stays out of "latest", which the
+          # install script uses.
+          prerelease=""
+          case "$version" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "v$version" dist/*.deb dist/*.rpm \
+            --title "Blurt $version" \
+            --notes-file notes.md \
+            --target "$GITHUB_SHA" $prerelease

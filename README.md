@@ -1,4 +1,4 @@
-<p align="center"><img src="packaging/icons/hicolor/128x128/apps/dev.blurt.Blurt.png" width="96" alt=""></p>
+<p align="center"><img src="data/icons/hicolor/128x128/apps/dev.blurt.Blurt.png" width="96" alt=""></p>
 
 # Blurt
 
@@ -10,21 +10,13 @@ It is built for Fedora Workstation and Ubuntu 24.04 or later with GNOME on Wayla
 
 ## Install
 
-Build a package from the latest release tag and install it. On Fedora:
+Every release has a `.rpm` for Fedora and a `.deb` for Ubuntu attached. This downloads the right one for your system and installs it with dnf or apt; run it again to update:
 
 ```sh
-make build-deps   # once: rpm-build and friends
-make rpm install
+scripts/install.sh   # or: make update
 ```
 
-On Ubuntu:
-
-```sh
-make build-deps   # once: pip and desktop-file-utils
-make deb install  # same as sudo apt install ./dist/blurt_X.Y.Z-1_all.deb
-```
-
-apt pulls in the dependencies from the Ubuntu archive. The `.deb` bundles `sounddevice`, the one Python library Ubuntu doesn't package.
+The repository is private, so the script downloads through the GitHub CLI when you're logged in (`gh auth login`).
 
 Then open Blurt from the app grid, click **Set up** in the banner, paste your API key and log out and back in once so GNOME Shell loads the top bar menu. Later releases install the same way; the service restarts on its own, the top bar menu picks up changes at your next login.
 
@@ -42,22 +34,22 @@ Your audio and transcripts go to OpenAI. Settings live in `~/.config/blurt/confi
 
 ## Develop
 
+Blurt is a Rust program (GTK 4 and libadwaita) plus a GNOME Shell extension for the top bar menu and typing, in `data/gnome-shell/`. Build dependencies:
+
 ```sh
-poetry install
-systemctl --user stop blurt.service
-poetry run blurt daemon      # in one terminal
-poetry run blurt settings    # in another
-make check                   # format, lint, types
+sudo dnf install gtk4-devel libadwaita-devel libsecret-devel alsa-lib-devel          # Fedora
+sudo apt install libgtk-4-dev libadwaita-1-dev libsecret-1-dev libasound2-dev        # Ubuntu
 ```
 
-`blurt transcribe FILE` runs a recording through transcription and cleanup without typing it. The top bar extension lives in `blurt/data/gnome-shell/`; GNOME Shell only reloads it at login.
+```sh
+systemctl --user stop blurt.service
+cargo run -- daemon        # in one terminal
+cargo run -- settings      # in another
+make check                 # format, lint, tests, data files, release notes
+```
+
+`blurt transcribe FILE` runs a recording through transcription and cleanup without typing it. GNOME Shell only reloads the extension at login. `make install PREFIX=~/.local` installs a build for your account without a package.
 
 ## Release
 
-Versions come from `pyproject.toml` and every release is a `vX.Y.Z` tag. Packages are only ever built from a tag through a clean `git archive`, so local changes never reach an installed build.
-
-```sh
-make release VERSION=0.5.0 NOTES="What changed"
-git push --follow-tags
-make rpm install   # or make deb install
-```
+Every push to `main` is checked and packaged by CI. When the version in `Cargo.toml` has no GitHub release yet, CI creates one with the packages attached and the version's `CHANGELOG.md` section as its notes. See `CLAUDE.md` for the steps.

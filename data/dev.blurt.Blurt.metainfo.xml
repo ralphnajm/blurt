@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>dev.blurt.Blurt</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+  <name>Blurt</name>
+  <summary>Talk anywhere you can type</summary>
+  <description>
+    <p>
+      Hold a key, say it, and Blurt types clean, filler-free text into whatever app has focus on
+      your GNOME desktop. Speech is transcribed with OpenAI when you let go, cleaned of fillers,
+      false starts and repeated words, and handed to GNOME's input method.
+    </p>
+    <ul>
+      <li>Hold Ctrl, Alt or Shift to talk, or use a start/stop shortcut</li>
+      <li>Types into terminals, browsers and GTK apps, accents and emoji included</li>
+      <li>A top bar menu shows when Blurt is listening, transcribing, or needs attention</li>
+      <li>A searchable history of everything you dictated</li>
+      <li>Estimated spend per day and per model, against a monthly budget</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">dev.blurt.Blurt.desktop</launchable>
+  <provides>
+    <binary>blurt</binary>
+  </provides>
+  <url type="homepage">https://github.com/ralphnajm/blurt</url>
+  <developer id="dev.blurt">
+    <name>Ralph Najem</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </supports>
+  <releases>
+    <release version="0.7.0" date="2026-11-10"/>
+    <release version="0.6.0" date="2026-10-02"/>
+    <release version="0.5.0" date="2026-10-02"/>
+  </releases>
+</component>
