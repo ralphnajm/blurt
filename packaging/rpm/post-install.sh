@@ -1,7 +1,8 @@
-# On upgrade ($1 is 2), restart the service for everyone who has it running.
-if [ "$1" -gt 1 ]; then
-    for user in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $2}'); do
-        systemctl --user -M "$user@" daemon-reload >/dev/null 2>&1 || true
-        systemctl --user -M "$user@" try-restart blurt.service >/dev/null 2>&1 || true
-    done
-fi
+# On install and upgrade, (re)start the service for every logged-in user who
+# has it enabled, so the new version runs right away.
+for user in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $2}'); do
+    systemctl --user -M "$user@" daemon-reload >/dev/null 2>&1 || true
+    if systemctl --user -M "$user@" is-enabled blurt.service >/dev/null 2>&1; then
+        systemctl --user -M "$user@" restart blurt.service >/dev/null 2>&1 || true
+    fi
+done

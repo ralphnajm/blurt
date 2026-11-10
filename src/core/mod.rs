@@ -6,4 +6,5 @@ pub mod history;
 pub mod openai;
 pub mod pricing;
 pub mod recorder;
+pub mod update;
 pub mod usage;

@@ -3,10 +3,7 @@
 # for this distribution from GitHub, installs it with apt or dnf, then deletes
 # the download.
 #
-#   scripts/install.sh
-#
-# The repository is private, so the download goes through the GitHub CLI when
-# it's logged in (`gh auth login`), and through the public API otherwise.
+#   curl -fsSL https://raw.githubusercontent.com/ralphnajm/blurt/main/scripts/install.sh | sh
 set -eu
 
 REPO=ralphnajm/blurt
@@ -18,6 +15,7 @@ fail() {
 
 # Everything runs from here, so a download cut short runs nothing.
 main() {
+    command -v curl > /dev/null || fail "curl is needed to download the package"
     [ "$(uname -m)" = x86_64 ] || fail "packages are only built for x86_64; build from source with make install"
 
     # The package format, from the distribution or else the package manager it has.
@@ -54,19 +52,11 @@ main() {
     chmod 755 "$dir"
 
     echo "Downloading the latest release of Blurt…"
-    if command -v gh > /dev/null && gh auth status > /dev/null 2>&1; then
-        gh release download --repo "$REPO" --pattern "*.$format" --dir "$dir" ||
-            fail "the latest release has no .$format package"
-    else
-        command -v curl > /dev/null || fail "curl or the GitHub CLI is needed to download the package"
-        url=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" |
-            sed -n "s/.*\"browser_download_url\": *\"\([^\"]*\.$format\)\".*/\1/p" | head -n 1) ||
-            fail "could not reach the release; for a private repository, log in with gh auth login"
-        [ -n "$url" ] || fail "the latest release has no .$format package"
-        curl -fL --progress-bar -o "$dir/${url##*/}" "$url"
-    fi
-    package=$(find "$dir" -name "*.$format" | head -n 1)
-    [ -n "$package" ] || fail "the latest release has no .$format package"
+    url=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" |
+        sed -n "s/.*\"browser_download_url\": *\"\([^\"]*\.$format\)\".*/\1/p" | head -n 1)
+    [ -n "$url" ] || fail "the latest release has no .$format package"
+    package="$dir/${url##*/}"
+    curl -fL --progress-bar -o "$package" "$url"
     chmod 644 "$package"
 
     echo "Installing ${package##*/}…"

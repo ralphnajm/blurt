@@ -5,6 +5,19 @@ All notable changes to Blurt are documented here. The format follows
 [Semantic Versioning](https://semver.org/). Each version's section becomes the
 notes of its GitHub release.
 
+## [0.8.0] - 2026-11-10
+
+### Added
+
+- **Check for Updates** in the settings window's menu: when a newer release is out, it offers to install it the way
+  Blurt was installed, asking for your password, and reopens the settings window as the new version.
+
+### Changed
+
+- Installing or updating the package starts the background service right away for everyone who has Blurt set up,
+  instead of only restarting it on upgrades: after a reinstall, dictation works without restarting it by hand.
+- Install with one line: `curl -fsSL https://raw.githubusercontent.com/ralphnajm/blurt/main/scripts/install.sh | sh`.
+
 ## [0.7.0] - 2026-11-10
 
 ### Changed

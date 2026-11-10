@@ -10,15 +10,13 @@ It is built for Fedora Workstation and Ubuntu 24.04 or later with GNOME on Wayla
 
 ## Install
 
-Every release has a `.rpm` for Fedora and a `.deb` for Ubuntu attached. This downloads the right one for your system and installs it with dnf or apt; run it again to update:
+Every release has a `.rpm` for Fedora and a `.deb` for Ubuntu attached. This downloads the right one for your system and installs it with dnf or apt:
 
 ```sh
-scripts/install.sh   # or: make update
+curl -fsSL https://raw.githubusercontent.com/ralphnajm/blurt/main/scripts/install.sh | sh
 ```
 
-The repository is private, so the script downloads through the GitHub CLI when you're logged in (`gh auth login`).
-
-Then open Blurt from the app grid, click **Set up** in the banner, paste your API key and log out and back in once so GNOME Shell loads the top bar menu. Later releases install the same way; the service restarts on its own, the top bar menu picks up changes at your next login.
+Then open Blurt from the app grid, click **Set up** in the banner, paste your API key and log out and back in once so GNOME Shell loads the top bar menu. To update, use **Check for Updates** in the settings window's menu, or run the line above again. The service restarts on its own; the top bar menu picks up changes at your next login.
 
 To switch Blurt off for your account run `blurt teardown`; `sudo dnf remove blurt` or `sudo apt remove blurt` removes it from the system.
 

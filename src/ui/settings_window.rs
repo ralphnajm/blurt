@@ -12,7 +12,7 @@ use super::{APP_ID, REPO_URL};
 use crate::account;
 use crate::core::config::Config;
 use crate::core::pricing::{CLEANUP_MODEL, CLEANUP_PER_MILLION, PRICES_AS_OF, TRANSCRIBE_PER_MINUTE, transcribe_rate};
-use crate::core::{openai, usage};
+use crate::core::{openai, update, usage};
 use crate::credentials;
 use crate::daemon::{BUS_NAME, INTERFACE, OBJECT_PATH};
 
@@ -572,6 +572,82 @@ fn usage_page(s: &Rc<Settings>) -> gtk::Widget {
     gtk::ScrolledWindow::builder().child(&clamp).hscrollbar_policy(gtk::PolicyType::Never).build().upcast()
 }
 
+/// Asks GitHub for a newer release and offers to install it. `action` stays
+/// disabled while checking or updating.
+fn check_for_updates(s: &Rc<Settings>, action: &gio::SimpleAction) {
+    action.set_enabled(false);
+    let (weak, action) = (Rc::downgrade(s), action.clone());
+    glib::spawn_future_local(async move {
+        let result = gio::spawn_blocking(|| update::check(crate::VERSION).map_err(|e| format!("{e:#}"))).await;
+        let Some(s) = weak.upgrade() else { return };
+        let version = match result {
+            Ok(Ok(Some(version))) => version,
+            Ok(Ok(None)) => {
+                action.set_enabled(true);
+                return s.toast("Blurt is up to date");
+            }
+            Ok(Err(err)) => {
+                action.set_enabled(true);
+                return s.toast(&format!("Could not check for updates: {err}"));
+            }
+            Err(_) => {
+                action.set_enabled(true);
+                return s.toast("Could not check for updates");
+            }
+        };
+        let dialog = adw::AlertDialog::builder()
+            .heading(format!("Blurt {version} is available"))
+            .body(format!(
+                "You have version {}. Updating installs the new version the way Blurt was installed, which may ask \
+                 for your password, and restarts Blurt. See what changed on GitHub.",
+                crate::VERSION
+            ))
+            .build();
+        dialog.add_responses(&[("later", "Not Now"), ("notes", "What's New"), ("update", "Update")]);
+        dialog.set_response_appearance("update", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("update"));
+        dialog.set_close_response("later");
+        let weak = Rc::downgrade(&s);
+        dialog.connect_response(None, move |_, response| {
+            let Some(s) = weak.upgrade() else { return };
+            match response {
+                "update" => install_update(&s, &action, version.clone()),
+                "notes" => {
+                    let url = format!("{REPO_URL}/releases/tag/v{version}");
+                    gtk::UriLauncher::new(&url).launch(Some(&s.window), gio::Cancellable::NONE, |_| {});
+                    action.set_enabled(true);
+                }
+                _ => action.set_enabled(true),
+            }
+        });
+        dialog.present(Some(&s.window));
+    });
+}
+
+fn install_update(s: &Rc<Settings>, action: &gio::SimpleAction, version: String) {
+    let progress = adw::Toast::builder().title(format!("Updating to Blurt {version}…")).timeout(0).build();
+    s.toasts.add_toast(progress.clone());
+    let (weak, action) = (Rc::downgrade(s), action.clone());
+    glib::spawn_future_local(async move {
+        let result =
+            gio::spawn_blocking(move || update::run(crate::VERSION, &version).map_err(|e| format!("{e:#}"))).await;
+        progress.dismiss();
+        let Some(s) = weak.upgrade() else { return };
+        action.set_enabled(true);
+        match result {
+            // The update script starts the new version once this one has quit.
+            Ok(Ok(update::Outcome::Updated)) => {
+                if let Some(app) = s.window.application() {
+                    app.quit();
+                }
+            }
+            Ok(Ok(update::Outcome::UpToDate)) => s.toast("Blurt is up to date"),
+            Ok(Err(err)) => s.toast(&format!("Update failed: {err}")),
+            Err(_) => s.toast("Update failed"),
+        }
+    });
+}
+
 fn show_about(window: &adw::ApplicationWindow) {
     adw::AboutDialog::builder()
         .application_name("Blurt")
@@ -637,8 +713,17 @@ pub fn build(app: &adw::Application) -> gtk::Window {
     ));
     let menu = gio::Menu::new();
     menu.append(Some("Show History"), Some("app.history"));
+    menu.append(Some("Check for Updates…"), Some("win.check-updates"));
     menu.append(Some("About Blurt"), Some("win.about"));
     header.pack_end(&gtk::MenuButton::builder().icon_name("open-menu-symbolic").menu_model(&menu).build());
+    let check = gio::SimpleAction::new("check-updates", None);
+    let weak = Rc::downgrade(&settings);
+    check.connect_activate(move |action, _| {
+        if let Some(s) = weak.upgrade() {
+            check_for_updates(&s, action);
+        }
+    });
+    window.add_action(&check);
     let about = gio::SimpleAction::new("about", None);
     let w = window.downgrade();
     about.connect_activate(move |_, _| {
