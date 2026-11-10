@@ -21,9 +21,10 @@ use crate::core::{history, openai};
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const USAGE: &str = "\
-Usage: blurt <command>
+Usage: blurt [command]
 
-Talk anywhere you can type.
+Talk anywhere you can type. Without a command, starts Blurt in the top bar,
+and opens the settings when something needs your attention.
 
 Commands:
   settings                 open the settings and usage window
@@ -71,8 +72,7 @@ fn option<'a>(args: &'a [String], names: &[&str]) -> Result<Option<&'a str>> {
 
 fn run(args: &[String]) -> Result<ExitCode> {
     let Some(command) = args.first() else {
-        eprintln!("{USAGE}");
-        return Ok(ExitCode::from(2));
+        return Ok(launch());
     };
     let rest = &args[1..];
     match command.as_str() {
@@ -112,6 +112,20 @@ fn run(args: &[String]) -> Result<ExitCode> {
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// What opening Blurt from the app grid does: starts the service, which puts
+/// Blurt in the top bar, and opens the settings only when something needs doing
+/// there: finishing setup, adding a key, or logging in again for the top bar.
+fn launch() -> ExitCode {
+    let status = account::status();
+    if status.complete() {
+        account::start_service();
+    }
+    if status.complete() && status.extension_loaded && credentials::api_key().is_some() {
+        return ExitCode::SUCCESS;
+    }
+    ui::run(ui::Start::Settings)
 }
 
 fn call(method: &str) -> Result<glib::Variant> {

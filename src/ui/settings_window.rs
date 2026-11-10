@@ -78,13 +78,10 @@ struct Settings {
     toasts: adw::ToastOverlay,
     stack: adw::ViewStack,
     banner: adw::Banner,
-    service_row: adw::SwitchRow,
     shortcut_row: adw::ActionRow,
     hold_delay_row: RefCell<Option<adw::SpinRow>>,
     reasoning_row: RefCell<Option<adw::ComboRow>>,
     usage: RefCell<Option<Usage>>,
-    /// Set while the UI is updated from code, so its signals don't save.
-    syncing: Cell<bool>,
 }
 
 impl Settings {
@@ -94,9 +91,6 @@ impl Settings {
 
     /// Changes a setting and saves it shortly after, once typing has paused.
     fn set(self: &Rc<Self>, change: impl FnOnce(&mut Config)) {
-        if self.syncing.get() {
-            return;
-        }
         change(&mut self.config.borrow_mut());
         self.sync_sensitivity();
         if let Some(id) = self.save.take() {
@@ -125,11 +119,19 @@ impl Settings {
     }
 
     fn apply_status(&self, status: &account::Status) {
-        self.syncing.set(true);
-        self.banner.set_revealed(!status.complete());
-        self.service_row.set_active(status.service_active);
+        if !status.complete() {
+            self.banner.set_title("Blurt isn't set up for your account yet");
+            self.banner.set_button_label(Some("Set up"));
+            self.banner.set_revealed(true);
+        } else if !status.extension_loaded {
+            // GNOME Shell only finds new extensions when you log in.
+            self.banner.set_title("Log out and back in once to show Blurt in the top bar");
+            self.banner.set_button_label(None);
+            self.banner.set_revealed(true);
+        } else {
+            self.banner.set_revealed(false);
+        }
         self.shortcut_row.set_subtitle(&shortcuts_summary(status));
-        self.syncing.set(false);
     }
 
     fn refresh_usage(&self) {
@@ -295,19 +297,8 @@ fn entry(
     row
 }
 
-fn service_group(s: &Rc<Settings>) -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder().title("Service").build();
-    let weak = Rc::downgrade(s);
-    s.service_row.connect_active_notify(move |row| {
-        let Some(s) = weak.upgrade() else { return };
-        if s.syncing.get() {
-            return;
-        }
-        let on = row.is_active();
-        account::set_service(on);
-        s.toast(if on { "Service started" } else { "Service stopped" });
-    });
-    group.add(&s.service_row);
+fn dictation_group(s: &Rc<Settings>) -> adw::PreferencesGroup {
+    let group = adw::PreferencesGroup::builder().title("Dictation").build();
     let change = gtk::Button::builder().label("Change…").valign(gtk::Align::Center).build();
     change.connect_clicked(|_| {
         let _ = std::process::Command::new("gnome-control-center").arg("keyboard").spawn();
@@ -678,20 +669,15 @@ pub fn build(app: &adw::Application) -> gtk::Window {
         toasts: adw::ToastOverlay::new(),
         stack: adw::ViewStack::new(),
         banner: adw::Banner::builder().title("Blurt isn't set up for your account yet").button_label("Set up").build(),
-        service_row: adw::SwitchRow::builder()
-            .title("Background service")
-            .subtitle("Listens for the dictation shortcut")
-            .build(),
         shortcut_row: adw::ActionRow::builder().title("Shortcuts").build(),
         hold_delay_row: RefCell::default(),
         reasoning_row: RefCell::default(),
         usage: RefCell::default(),
-        syncing: Cell::new(false),
     });
     settings.apply_status(&status);
 
     let preferences = adw::PreferencesPage::new();
-    preferences.add(&service_group(&settings));
+    preferences.add(&dictation_group(&settings));
     preferences.add(&openai_group(&settings));
     preferences.add(&speech_group(&settings));
     preferences.add(&cleanup_group(&settings));
@@ -741,8 +727,10 @@ pub fn build(app: &adw::Application) -> gtk::Window {
         glib::spawn_future_local(async move {
             let status = gio::spawn_blocking(|| account::set_up(&[])).await;
             let Some(s) = weak.upgrade() else { return };
-            s.banner.set_button_label(Some("Set up"));
-            let Ok(status) = status else { return s.toast("Setup didn't finish, see `blurt setup` in a terminal") };
+            let Ok(status) = status else {
+                s.banner.set_button_label(Some("Set up"));
+                return s.toast("Setup didn't finish, see `blurt setup` in a terminal");
+            };
             s.apply_status(&status);
             if !status.complete() {
                 s.toast("Setup didn't finish, see `blurt setup` in a terminal");

@@ -5,6 +5,21 @@ All notable changes to Blurt are documented here. The format follows
 [Semantic Versioning](https://semver.org/). Each version's section becomes the
 notes of its GitHub release.
 
+## [0.9.0] - 2026-11-10
+
+### Changed
+
+- Opening Blurt from the app grid starts it in the top bar instead of opening the settings window. The settings
+  window opens only when something needs doing there: finishing setup, adding your API key, or logging out and back
+  in once so the top bar menu loads. Open it any time with **Settings…** in the top bar menu.
+- **Quit Blurt** in the top bar menu is how you stop Blurt: it stays off until you open it again or log in.
+- The settings window says when GNOME needs you to log out and back in before Blurt shows in the top bar, instead of
+  Blurt silently doing nothing.
+
+### Removed
+
+- The **Background service** switch in the settings window: open Blurt to start it, and quit it from the top bar menu.
+
 ## [0.8.0] - 2026-11-10
 
 ### Added

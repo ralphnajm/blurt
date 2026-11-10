@@ -16,7 +16,7 @@ Every release has a `.rpm` for Fedora and a `.deb` for Ubuntu attached. This dow
 curl -fsSL https://raw.githubusercontent.com/ralphnajm/blurt/main/scripts/install.sh | sh
 ```
 
-Then open Blurt from the app grid, click **Set up** in the banner, paste your API key and log out and back in once so GNOME Shell loads the top bar menu. To update, use **Check for Updates** in the settings window's menu, or run the line above again. The service restarts on its own; the top bar menu picks up changes at your next login.
+Then open Blurt from the app grid, click **Set up** in the banner, paste your API key and log out and back in once so GNOME Shell loads the top bar menu. From then on, opening Blurt puts it in the top bar without opening a window, and it starts by itself when you log in; **Settings…** in its menu opens the settings and **Quit Blurt** stops it until you open it again. To update, use **Check for Updates** in the settings window's menu, or run the line above again. The service restarts on its own; the top bar menu picks up changes at your next login.
 
 To switch Blurt off for your account run `blurt teardown`; `sudo dnf remove blurt` or `sudo apt remove blurt` removes it from the system.
 

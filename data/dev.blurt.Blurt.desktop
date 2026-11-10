@@ -3,12 +3,16 @@ Type=Application
 Name=Blurt
 Comment=Talk anywhere you can type
 Icon=dev.blurt.Blurt
-Exec=blurt settings
+Exec=blurt
 Terminal=false
 StartupNotify=true
 Categories=Utility;Accessibility;
 Keywords=voice;dictation;speech;transcribe;dictate;typing;
-Actions=history;
+Actions=settings;history;
+
+[Desktop Action settings]
+Name=Settings
+Exec=blurt settings
 
 [Desktop Action history]
 Name=Show History

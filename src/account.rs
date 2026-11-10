@@ -188,13 +188,13 @@ pub fn set_up(bindings: &[(&str, Option<&str>)]) -> Status {
     status()
 }
 
-pub fn set_service(on: bool) {
-    let action = if on { "enable" } else { "disable" };
-    run("systemctl", &["--user", action, "--now", SERVICE]);
+/// Starts the service if it isn't running, which puts Blurt in the top bar.
+pub fn start_service() {
+    run("systemctl", &["--user", "start", SERVICE]);
 }
 
 pub fn tear_down() {
-    set_service(false);
+    run("systemctl", &["--user", "disable", "--now", SERVICE]);
     disable_extension();
     remove_shortcuts();
 }
